@@ -1,0 +1,9 @@
+{
+  "name": "Circle",
+  "short_name": "Circle",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "description": "Conoce quién está abierto a hablar a tu alrededor."
+}
