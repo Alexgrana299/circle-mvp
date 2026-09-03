@@ -49,79 +49,22 @@
 .conversation-banner button:disabled{opacity:.65;cursor:wait}
 @media(max-width:420px){.conversation-banner{grid-template-columns:auto 1fr}.conversation-banner button{grid-column:1/-1;width:100%;min-height:40px}.conversation-banner small{max-width:240px}}
 
-/* Realtime connection feedback */
-.connection-modal {
-  position: fixed;
-  inset: 0;
-  z-index: 120;
-  display: grid;
-  place-items: center;
-  padding: 22px;
-  background: rgba(9, 18, 37, 0.42);
-  backdrop-filter: blur(10px);
-}
+/* Scrollable social canvas: positions are illustrative, never geographic. */
+.people-cloud-frame{position:relative;margin:0 -6px 10px;border-radius:28px;border:1px solid #edf2fb;background:linear-gradient(180deg,#fbfdff,#f7faff);overflow:hidden}
+.people-cloud-scroll{height:520px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#d7e2f2 transparent;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y}
+.people-cloud-canvas{position:relative;min-width:100%;min-height:100%;background:radial-gradient(circle at 48% 45%,rgba(47,116,255,.07),transparent 30%),radial-gradient(circle at 75% 72%,rgba(11,168,142,.06),transparent 25%)}
+.people-cloud-canvas .person-bubble{transform:translate(-50%,-50%);width:126px}
+.people-cloud-canvas .my-bubble{transform:translate(-50%,-50%)}
+.people-cloud-frame .cloud-note{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);z-index:15;pointer-events:none;box-shadow:0 5px 16px rgba(25,44,78,.06)}
+.people-cloud-scroll::-webkit-scrollbar{width:7px;height:7px}.people-cloud-scroll::-webkit-scrollbar-thumb{background:#d7e2f2;border-radius:999px}.people-cloud-scroll::-webkit-scrollbar-track{background:transparent}
+@media(max-width:480px){.people-cloud-scroll{height:500px}.people-cloud-canvas .person-bubble{width:122px}}
 
-.connection-sheet {
-  width: min(100%, 430px);
-  background: rgba(255,255,255,0.98);
-  border: 1px solid rgba(37, 99, 235, 0.12);
-  border-radius: 30px;
-  padding: 30px 24px 24px;
-  box-shadow: 0 28px 80px rgba(20, 45, 90, 0.24);
-  text-align: center;
-}
-
-.connection-sheet h2 {
-  margin: 7px 0 8px;
-  font-size: clamp(28px, 7vw, 36px);
-}
-
-.connection-sheet > p {
-  margin: 0 auto 20px;
-  max-width: 34ch;
-  color: var(--muted);
-  line-height: 1.55;
-}
-
-.connection-success-icon {
-  width: 74px;
-  height: 74px;
-  margin: 0 auto 16px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  color: white;
-  background: linear-gradient(135deg, #25c59a, #16a57f);
-  box-shadow: 0 16px 34px rgba(22, 165, 127, 0.26);
-}
-
-.connection-location-card {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 16px;
-  margin: 0 0 18px;
-  text-align: left;
-  border-radius: 18px;
-  background: linear-gradient(135deg, rgba(235,245,255,0.98), rgba(241,249,255,0.98));
-  border: 1px solid rgba(48, 132, 255, 0.14);
-  color: #1665c1;
-}
-
-.connection-location-card div {
-  display: grid;
-  gap: 3px;
-}
-
-.connection-location-card span {
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .05em;
-  color: #6a86a8;
-}
-
-.connection-location-card strong {
-  color: #173a62;
-  line-height: 1.4;
-}
+/* Requests navigation and outgoing cancellation. */
+.request-tabs{display:grid;grid-template-columns:1fr 1fr;gap:5px;background:#f2f5fa;padding:4px;border-radius:14px;margin:14px 0 14px}
+.request-tabs button{border:0;background:transparent;border-radius:11px;min-height:42px;color:#748197;font-size:12px;font-weight:850;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px}
+.request-tabs button span{min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:#e5eaf2;color:#6f7b8e;font-size:10px;display:grid;place-items:center}
+.request-tabs button.active{background:#fff;color:#245fd2;box-shadow:0 3px 12px rgba(23,45,82,.08)}
+.request-tabs button.active span{background:#e9f1ff;color:#246bfe}
+.outgoing-pending-row{display:grid;gap:8px;margin-top:12px}.outgoing-pending-row .waiting-copy{margin-top:0}
+.cancel-request{width:100%;min-height:42px;border:1px solid #e0e5ee;background:#fff;border-radius:12px;color:#68758b;font-size:11px;font-weight:850;cursor:pointer}
+.cancel-request:hover{border-color:#cbd5e4;background:#fafcff}.cancel-request:disabled{opacity:.55;cursor:wait}

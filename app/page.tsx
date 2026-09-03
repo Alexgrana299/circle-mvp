@@ -37,6 +37,7 @@ type Person = {
 
 type View = "landing" | "auth" | "radar" | "profile" | "myProfile" | "requests" | "success";
 type AuthMode = "login" | "signup";
+type RequestTab = "incoming" | "outgoing";
 type LocationIssue = "permission-denied" | "unavailable" | "timeout" | "unsupported";
 type LocationAction = "search" | "update" | "save";
 
@@ -77,18 +78,61 @@ const demoPeople: Person[] = [
   { id: "demo-fer", name: "Fernanda", initials: "F", bio: "Libros, cine y nuevas experiencias.", intent: "Charlar", interests: ["Libros", "Arte", "Viajes"], avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
 ];
 
-const bubblePositions = [
-  { left: "18%", top: "20%", scale: 1.00 },
-  { left: "78%", top: "18%", scale: .94 },
-  { left: "15%", top: "54%", scale: .92 },
-  { left: "82%", top: "53%", scale: 1.00 },
-  { left: "25%", top: "84%", scale: .94 },
-  { left: "74%", top: "83%", scale: .96 },
-  { left: "48%", top: "14%", scale: .88 },
-  { left: "48%", top: "88%", scale: .90 },
-  { left: "9%", top: "78%", scale: .84 },
-  { left: "91%", top: "77%", scale: .84 },
-];
+const CLOUD_RING_GAP = 165;
+const CLOUD_FIRST_RING = 180;
+const CLOUD_MIN_CHORD = 150;
+const CLOUD_EDGE_PADDING = 150;
+
+function seededJitter(seed: number) {
+  const value = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
+  return (value - Math.floor(value)) * 2 - 1;
+}
+
+function makeCloudLayout(count: number) {
+  const polarSlots: Array<{ radius: number; angle: number }> = [];
+  let remaining = count;
+  let ring = 0;
+
+  while (remaining > 0) {
+    const baseRadius = CLOUD_FIRST_RING + ring * CLOUD_RING_GAP;
+    const capacity = Math.max(6, Math.floor((2 * Math.PI * baseRadius) / CLOUD_MIN_CHORD));
+    const take = Math.min(remaining, capacity);
+    const phase = ring * 0.63 + seededJitter(ring + 1) * 0.22;
+
+    for (let i = 0; i < take; i++) {
+      const sector = (2 * Math.PI) / take;
+      const angleJitter = seededJitter((ring + 1) * 100 + i) * sector * 0.16;
+      const radialJitter = seededJitter((ring + 1) * 1000 + i) * 20;
+      polarSlots.push({
+        radius: baseRadius + radialJitter,
+        angle: phase + i * sector + angleJitter,
+      });
+    }
+
+    remaining -= take;
+    ring += 1;
+  }
+
+  const maxRadius = polarSlots.length
+    ? Math.max(...polarSlots.map(slot => slot.radius))
+    : CLOUD_FIRST_RING;
+  const diameter = Math.max(700, (maxRadius + CLOUD_EDGE_PADDING) * 2);
+  const width = diameter;
+  const height = Math.max(660, diameter);
+  const centerX = width / 2;
+  const centerY = height / 2;
+
+  return {
+    width,
+    height,
+    centerX,
+    centerY,
+    people: polarSlots.map(slot => ({
+      x: centerX + Math.cos(slot.angle) * slot.radius,
+      y: centerY + Math.sin(slot.angle) * slot.radius,
+    })),
+  };
+}
 
 function isProfileComplete(profile: { name: string; bio: string; avatar: string; interests: string[]; mood: string; howToFindMe: string }) {
   return Boolean(
@@ -128,6 +172,7 @@ export default function Home() {
   const [requestsLoading, setRequestsLoading] = useState(false);
   const [requestActionId, setRequestActionId] = useState<number | null>(null);
   const [requestNotice, setRequestNotice] = useState("");
+  const [requestTab, setRequestTab] = useState<RequestTab>("incoming");
   const [activeConversation, setActiveConversation] = useState<ActiveConversation | null>(null);
   const [conversationEnding, setConversationEnding] = useState(false);
   const [connectionNotice, setConnectionNotice] = useState<ActiveConversation | null>(null);
@@ -153,6 +198,7 @@ export default function Home() {
   const lastPresenceCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
   const requestsRef = useRef<SocialRequest[]>([]);
   const notifiedAcceptedRequestIdsRef = useRef<Set<number>>(new Set());
+  const peopleCanvasRef = useRef<HTMLDivElement | null>(null);
 
   function connectionAckKey(requestId: number) { return `circle_connection_ack_${requestId}`; }
   function isConnectionAcknowledged(requestId: number) {
@@ -170,6 +216,10 @@ export default function Home() {
   const nearbyCount = useMemo(() => people.length, [people]);
   const pendingIncomingCount = useMemo(() => requests.filter(r => r.direction === "incoming" && r.status === "pending").length, [requests]);
   const availableNearbyCount = useMemo(() => people.filter(p => p.socialStatus === "available").length, [people]);
+  const incomingRequests = useMemo(() => requests.filter(r => r.direction === "incoming"), [requests]);
+  const outgoingRequests = useMemo(() => requests.filter(r => r.direction === "outgoing"), [requests]);
+  const visibleRequests = requestTab === "incoming" ? incomingRequests : outgoingRequests;
+  const cloudLayout = useMemo(() => makeCloudLayout(people.length), [people.length]);
 
   function distanceMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
     const toRad = (v: number) => v * Math.PI / 180;
@@ -572,6 +622,10 @@ export default function Home() {
   async function sendRequest(person: Person) {
     setRequestNotice("");
     if (person.socialStatus === "busy") throw new Error("Esta persona está ocupada en una conversación.");
+    if (!person.simulated) {
+      const alreadyPending = requestsRef.current.find(r => r.direction === "outgoing" && r.otherId === person.id && r.status === "pending");
+      if (alreadyPending) throw new Error("Ya habías enviado un saludo a esta persona. Puedes esperar su respuesta o cancelarlo en Solicitudes → Enviadas.");
+    }
     if (!person.simulated && supabase) {
       const { error } = await supabase.rpc("send_social_request", { p_receiver_id: person.id });
       if (error) throw error;
@@ -614,6 +668,22 @@ export default function Home() {
       }
     } catch (error: any) {
       setRequestNotice(error?.message || "No pudimos actualizar la solicitud.");
+    } finally {
+      setRequestActionId(null);
+    }
+  }
+
+  async function cancelRequest(request: SocialRequest) {
+    if (!supabase || request.direction !== "outgoing" || request.status !== "pending") return;
+    setRequestActionId(request.id);
+    setRequestNotice("");
+    try {
+      const { error } = await supabase.rpc("cancel_social_request", { p_request_id: request.id });
+      if (error) throw error;
+      setRequestNotice(`Cancelaste el saludo enviado a ${request.name}.`);
+      await loadRequests(true);
+    } catch (error: any) {
+      setRequestNotice(error?.message || "No pudimos cancelar la solicitud.");
     } finally {
       setRequestActionId(null);
     }
@@ -1010,6 +1080,17 @@ export default function Home() {
   }, [isAuthenticated, profileComplete, view, coords?.lat, coords?.lng]);
 
   useEffect(() => {
+    if (view !== "radar") return;
+    const el = peopleCanvasRef.current;
+    if (!el) return;
+    const frame = window.requestAnimationFrame(() => {
+      el.scrollLeft = Math.max(0, (el.scrollWidth - el.clientWidth) / 2);
+      el.scrollTop = Math.max(0, (el.scrollHeight - el.clientHeight) / 2);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [view]);
+
+  useEffect(() => {
     if (!locationIssue) return;
     const retryWhenVisible = () => {
       if (document.visibilityState === "visible") {
@@ -1095,20 +1176,24 @@ export default function Home() {
                 <Bell size={18}/><div><strong>{pendingIncomingCount === 1 ? "Alguien quiere saludarte" : `${pendingIncomingCount} personas quieren saludarte`}</strong><span>Toca para revisar la solicitud.</span></div><span className="incoming-alert-arrow">›</span>
               </button>
             )}
-            <div className="people-cloud" aria-label="Personas disponibles cerca. La posición de las burbujas es ilustrativa.">
-              <div className="cloud-note">Las posiciones son ilustrativas</div>
-              {people.slice(0,10).map((p, i) => (
-                <button key={p.id} className={`person-bubble ${p.socialStatus === "busy" ? "busy" : ""}`} style={{ left: bubblePositions[i].left, top: bubblePositions[i].top, transform: `translate(-50%,-50%) scale(${bubblePositions[i].scale})` }} onClick={() => openPerson(p)}>
-                  <span className="intent-tag">{p.intent}</span>
-                  {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name}/> : <span className="avatar-fallback locked-avatar"><UserRound size={28}/></span>}
-                  <strong>{p.name}</strong><small>{p.socialStatus === "busy" ? "Ocupado" : "Disponible"}</small>
-                </button>
-              ))}
-              <button className={`my-bubble ${activeConversation ? "busy" : ""}`} onClick={() => openMyProfile()} aria-label="Abrir mi perfil">
-                {avatarUrl ? <img src={avatarUrl} alt="Tu perfil"/> : <span className="my-avatar-empty"><UserRound size={30}/></span>}
-                <strong>Tú</strong>
-                <small>{profileComplete ? (activeConversation ? "Ocupado" : mood) : "Completar perfil"}</small>
-              </button>
+            <div className="people-cloud-frame" aria-label="Personas disponibles cerca. La posición de las burbujas es ilustrativa.">
+              <div className="people-cloud-scroll" ref={peopleCanvasRef}>
+                <div className="people-cloud-canvas" style={{ width: `${cloudLayout.width}px`, height: `${cloudLayout.height}px` }}>
+                  {people.map((p, i) => (
+                    <button key={p.id} className={`person-bubble ${p.socialStatus === "busy" ? "busy" : ""}`} style={{ left: `${cloudLayout.people[i].x}px`, top: `${cloudLayout.people[i].y}px` }} onClick={() => openPerson(p)}>
+                      <span className="intent-tag">{p.intent}</span>
+                      {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name}/> : <span className="avatar-fallback locked-avatar"><UserRound size={28}/></span>}
+                      <strong>{p.name}</strong><small>{p.socialStatus === "busy" ? "Ocupado" : "Disponible"}</small>
+                    </button>
+                  ))}
+                  <button className={`my-bubble ${activeConversation ? "busy" : ""}`} style={{ left: `${cloudLayout.centerX}px`, top: `${cloudLayout.centerY}px` }} onClick={() => openMyProfile()} aria-label="Abrir mi perfil">
+                    {avatarUrl ? <img src={avatarUrl} alt="Tu perfil"/> : <span className="my-avatar-empty"><UserRound size={30}/></span>}
+                    <strong>Tú</strong>
+                    <small>{profileComplete ? (activeConversation ? "Ocupado" : mood) : "Completar perfil"}</small>
+                  </button>
+                </div>
+              </div>
+              <div className="cloud-note">Desliza para explorar · posiciones ilustrativas</div>
             </div>
             <div className="radar-update-zone">
               <button className="profile-update-button" type="button" onClick={updatePresenceAndNearby} disabled={profileUpdating || locating}>
@@ -1172,12 +1257,16 @@ export default function Home() {
           <div className="content-pad requests-screen">
             <button className="back" onClick={() => setView("radar")}><ArrowLeft size={20}/> Personas cerca</button>
             <span className="subtle">Solicitudes</span>
-            <h2>{pendingIncomingCount ? `${pendingIncomingCount} ${pendingIncomingCount === 1 ? "persona quiere" : "personas quieren"} saludarte` : "Tus solicitudes"}</h2>
-            <p>Antes de aceptar puedes identificar a quien quiere acercarse. Tu “Cómo encontrarme” sigue oculto hasta que tú aceptes.</p>
+            <h2>{requestTab === "incoming" && pendingIncomingCount ? `${pendingIncomingCount} ${pendingIncomingCount === 1 ? "persona quiere" : "personas quieren"} saludarte` : "Tus invitaciones"}</h2>
+            <div className="request-tabs" role="tablist" aria-label="Tipo de solicitudes">
+              <button type="button" className={requestTab === "incoming" ? "active" : ""} onClick={() => { setRequestTab("incoming"); setRequestNotice(""); }}>Recibidas <span>{incomingRequests.length}</span></button>
+              <button type="button" className={requestTab === "outgoing" ? "active" : ""} onClick={() => { setRequestTab("outgoing"); setRequestNotice(""); }}>Enviadas <span>{outgoingRequests.length}</span></button>
+            </div>
+            <p>{requestTab === "incoming" ? "Antes de aceptar puedes identificar a quien quiere acercarse. Tu “Cómo encontrarme” sigue oculto hasta que tú aceptes." : "Aquí puedes revisar tus saludos enviados y cancelar los que sigan pendientes."}</p>
             {requestNotice && <div className="auth-feedback success">{requestNotice}</div>}
-            {requestsLoading ? <div className="requests-empty">Cargando solicitudes…</div> : requests.length === 0 ? <div className="requests-empty"><Hand size={26}/><strong>Aún no tienes solicitudes</strong><span>Cuando alguien quiera saludarte aparecerá aquí.</span></div> : (
+            {requestsLoading ? <div className="requests-empty">Cargando solicitudes…</div> : visibleRequests.length === 0 ? <div className="requests-empty"><Hand size={26}/><strong>{requestTab === "incoming" ? "Aún no tienes solicitudes recibidas" : "Aún no has enviado saludos"}</strong><span>{requestTab === "incoming" ? "Cuando alguien quiera saludarte aparecerá aquí." : "Los saludos que envíes aparecerán aquí."}</span></div> : (
               <div className="request-list">
-                {requests.map(request => (
+                {visibleRequests.map(request => (
                   <article className={`request-card ${request.status}`} key={request.id}>
                     <div className="request-person">
                       {request.avatar ? <img src={request.avatar} alt={request.name}/> : <span className="request-avatar-fallback"><UserRound size={25}/></span>}
@@ -1196,7 +1285,12 @@ export default function Home() {
                         <button className="accept-request" disabled={requestActionId === request.id} onClick={() => respondToRequest(request, "accepted")}><Check size={18}/>{requestActionId === request.id ? "Procesando…" : "Puede acercarse"}</button>
                       </div>
                     )}
-                    {request.direction === "outgoing" && request.status === "pending" && <div className="waiting-copy">Esperando respuesta. Su ubicación sigue oculta.</div>}
+                    {request.direction === "outgoing" && request.status === "pending" && (
+                      <div className="outgoing-pending-row">
+                        <div className="waiting-copy">Esperando respuesta. Su ubicación sigue oculta.</div>
+                        <button className="cancel-request" type="button" disabled={requestActionId === request.id} onClick={() => cancelRequest(request)}>{requestActionId === request.id ? "Cancelando…" : "Cancelar saludo"}</button>
+                      </div>
+                    )}
                     {request.direction === "outgoing" && request.status === "accepted" && request.howToFindMe && <div className="accepted-copy"><Check size={16}/> Ya puedes acercarte a saludarle. Ambos aparecen como ocupados hasta finalizar la plática.</div>}
                   </article>
                 ))}
