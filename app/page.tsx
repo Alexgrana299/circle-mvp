@@ -173,7 +173,7 @@ export default function Home() {
     const dLng = toRad(b.lng - a.lng);
     const lat1 = toRad(a.lat);
     const lat2 = toRad(b.lat);
-    const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    const h = Math.sin(dLat/2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng/2) ** 2;
     return 2 * R * Math.asin(Math.sqrt(h));
   }
 
@@ -407,11 +407,49 @@ export default function Home() {
         startedAt: row.started_at,
       } : null;
       setActiveConversation(conversation);
+      if (conversation) {
+        setPeople(current => current.map(person =>
+          person.id === conversation.otherId
+            ? { ...person, socialStatus: "busy" as const }
+            : person
+        ));
+      }
       return conversation;
     } catch (error: any) {
       if (!silent) setRequestNotice(error?.message || "No pudimos cargar tu conversación activa.");
       return null;
     }
+  }
+
+  async function loadActiveConversationWithRetry(
+    fallback?: ActiveConversation | null,
+    attempts = 5,
+    delayMs = 250
+  ): Promise<ActiveConversation | null> {
+    // Poka-yoke: después de aceptar, la conversación en BD es la fuente de verdad.
+    // En móvil/Reatime puede haber pequeños retrasos de propagación en UI, así que
+    // reintentamos en vez de asumir que un primer null significa "sin conversación".
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const conversation = await loadActiveConversation(true);
+      if (conversation) return conversation;
+      if (attempt < attempts - 1) {
+        await new Promise(resolve => window.setTimeout(resolve, delayMs));
+      }
+    }
+    if (fallback) setActiveConversation(fallback);
+    return fallback || null;
+  }
+
+  function markConversationLocally(conversation: ActiveConversation | null) {
+    setActiveConversation(conversation);
+    if (!conversation) return;
+    // Poka-yoke visual: no esperamos a que nearby_profiles vuelva para reflejar
+    // que la contraparte ya está ocupada. El siguiente refresh confirma desde BD.
+    setPeople(current => current.map(person =>
+      person.id === conversation.otherId
+        ? { ...person, socialStatus: "busy" as const }
+        : person
+    ));
   }
 
   async function syncSocialState(showAcceptedFeedback = false) {
@@ -423,6 +461,7 @@ export default function Home() {
 
     const latest = await loadRequests(true);
     const conversation = await loadActiveConversation(true);
+    if (conversation) markConversationLocally(conversation);
 
     if (showAcceptedFeedback && conversation) {
       // No dependemos de haber observado la transición pending -> accepted.
@@ -453,7 +492,13 @@ export default function Home() {
     setConversationEnding(true);
     setRequestNotice("");
     try {
-      const { error } = await supabase.rpc("end_conversation", { p_conversation_id: activeConversation.id });
+      const confirmedConversation = activeConversation.id > 0
+        ? activeConversation
+        : await loadActiveConversationWithRetry(activeConversation, 6, 250);
+      if (!confirmedConversation || confirmedConversation.id <= 0) {
+        throw new Error("La conversación todavía se está sincronizando. Intenta de nuevo en un momento.");
+      }
+      const { error } = await supabase.rpc("end_conversation", { p_conversation_id: confirmedConversation.id });
       if (error) throw error;
       setActiveConversation(null);
       await repairMySocialStatus();
@@ -492,7 +537,22 @@ export default function Home() {
       setRequestNotice(decision === "accepted" ? `Aceptaste a ${request.name}. Ahora puede ver cómo encontrarte.` : `Rechazaste la solicitud de ${request.name}.`);
       await loadRequests(true);
       if (decision === "accepted") {
-        await loadActiveConversation(true);
+        // Feedback inmediato para quien acepta (B): no debe depender de Realtime.
+        const provisional: ActiveConversation = {
+          id: -request.id,
+          otherId: request.otherId,
+          name: request.name,
+          avatar: request.avatar,
+          intent: request.intent,
+          howToFindMe: request.howToFindMe,
+          startedAt: new Date().toISOString(),
+        };
+        markConversationLocally(provisional);
+        setView("radar");
+
+        const confirmed = await loadActiveConversationWithRetry(provisional, 6, 250);
+        if (confirmed) markConversationLocally(confirmed);
+        await repairMySocialStatus();
         if (coords) await refreshNearbyAt(coords, true);
       }
     } catch (error: any) {
@@ -816,7 +876,7 @@ export default function Home() {
           "postgres_changes",
           { event: "*", schema: "public", table: "conversation_members", filter: `user_id=eq.${userId}` },
           async () => {
-            await loadActiveConversation(true);
+            await syncSocialState(true);
             if (view === "radar" && coords) await refreshNearbyAt(coords, true);
           }
         )
@@ -895,7 +955,7 @@ export default function Home() {
           await refreshNearbyAt(nextCoords, true);
         }
       },
-      () => { },
+      () => {},
       { enableHighAccuracy: true, maximumAge: 20000, timeout: 10000 }
     );
 
@@ -913,10 +973,10 @@ export default function Home() {
             {isAuthenticated && view !== "landing" && view !== "auth" && (
               <>
                 <button className="notification-button" onClick={async () => { await loadRequests(); setView("requests"); }} aria-label="Solicitudes" title="Solicitudes">
-                  <Bell size={18} />
+                  <Bell size={18}/>
                   {pendingIncomingCount > 0 && <span className="notification-badge">{pendingIncomingCount > 9 ? "9+" : pendingIncomingCount}</span>}
                 </button>
-                <button className="logout-button" onClick={signOut} aria-label="Cerrar sesión" title="Cerrar sesión"><LogOut size={17} /></button>
+                <button className="logout-button" onClick={signOut} aria-label="Cerrar sesión" title="Cerrar sesión"><LogOut size={17}/></button>
               </>
             )}
           </div>
@@ -924,22 +984,22 @@ export default function Home() {
 
         {view === "landing" && (
           <div className="landing content-pad">
-            <div className="eyebrow"><Sparkles size={16} /> Conoce a quien ya está aquí</div>
+            <div className="eyebrow"><Sparkles size={16}/> Conoce a quien ya está aquí</div>
             <h1>¿Quién está abierto a <span>hablar contigo</span> cerca?</h1>
             <p className="lead">Circle elimina la parte incómoda de iniciar una conversación: primero sabes quién sí quiere que te acerques.</p>
             <div className="mini-cloud" aria-label="Vista previa de personas cercanas">
-              {demoPeople.slice(0, 4).map((p, i) => <img key={p.id} src={p.avatar} alt="Perfil" className={`mini-avatar a${i + 1}`} />)}
+              {demoPeople.slice(0,4).map((p, i) => <img key={p.id} src={p.avatar} alt="Perfil" className={`mini-avatar a${i+1}`} />)}
               <div className="you-dot">Tú</div>
             </div>
-            <button className="primary hero-button" onClick={enterCircle}><Radio size={20} />{isAuthenticated ? "Entrar a Circle" : "Buscar gente para socializar"}</button>
-            <p className="microcopy"><MapPin size={14} /> Usamos tu ubicación para saber quién está en tu zona, nunca para mostrar tu posición exacta.</p>
+            <button className="primary hero-button" onClick={enterCircle}><Radio size={20}/>{isAuthenticated ? "Entrar a Circle" : "Buscar gente para socializar"}</button>
+            <p className="microcopy"><MapPin size={14}/> Usamos tu ubicación para saber quién está en tu zona, nunca para mostrar tu posición exacta.</p>
             {!hasSupabase && <div className="dev-note">Conecta Supabase para usar cuentas y perfiles reales.</div>}
           </div>
         )}
 
         {view === "auth" && (
           <div className="content-pad auth-screen">
-            <button className="back" onClick={() => setView("landing")}><ArrowLeft size={20} /> Volver</button>
+            <button className="back" onClick={() => setView("landing")}><ArrowLeft size={20}/> Volver</button>
             <span className="subtle">Tu cuenta Circle</span>
             <h2>{authMode === "login" ? "Bienvenido de vuelta" : "Crea tu cuenta"}</h2>
             <p>{authMode === "login" ? "Inicia sesión para ver quién está disponible cerca de ti." : "Solo necesitas correo y contraseña. Tu perfil social lo completarás después."}</p>
@@ -948,14 +1008,14 @@ export default function Home() {
               <button type="button" className={authMode === "signup" ? "active" : ""} onClick={() => { setAuthMode("signup"); setAuthError(""); setAuthMessage(""); }}>Crear cuenta</button>
             </div>
             <form className="auth-form" onSubmit={handleAuthSubmit}>
-              <label>Correo electrónico<div className="input-with-icon"><Mail size={18} /><input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="tu@correo.com" /></div></label>
-              <label>Contraseña<div className="input-with-icon password-field"><input type={showPassword ? "text" : "password"} autoComplete={authMode === "login" ? "current-password" : "new-password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" /><button type="button" onClick={() => setShowPassword(v => !v)} aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div></label>
+              <label>Correo electrónico<div className="input-with-icon"><Mail size={18}/><input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="tu@correo.com" /></div></label>
+              <label>Contraseña<div className="input-with-icon password-field"><input type={showPassword ? "text" : "password"} autoComplete={authMode === "login" ? "current-password" : "new-password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" /><button type="button" onClick={() => setShowPassword(v => !v)} aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}>{showPassword ? <EyeOff size={18}/> : <Eye size={18}/>}</button></div></label>
               {authMode === "signup" && <label>Confirmar contraseña<div className="input-with-icon"><input type={showPassword ? "text" : "password"} autoComplete="new-password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Repite tu contraseña" /></div></label>}
               {authError && <div className="auth-feedback error">{authError}</div>}
               {authMessage && <div className="auth-feedback success">{authMessage}</div>}
               <button className="primary" type="submit" disabled={authLoading}>{authLoading ? "Procesando…" : authMode === "login" ? "Iniciar sesión" : "Crear cuenta"}</button>
             </form>
-            <p className="microcopy center"><ShieldCheck size={14} /> Tu correo se usa para tu cuenta; no se muestra públicamente en Circle.</p>
+            <p className="microcopy center"><ShieldCheck size={14}/> Tu correo se usa para tu cuenta; no se muestra públicamente en Circle.</p>
           </div>
         )}
 
@@ -967,34 +1027,34 @@ export default function Home() {
             <div className="status-line">{status}</div>
             {activeConversation && (
               <div className="conversation-banner">
-                <div className="conversation-icon"><MessageCircle size={19} /></div>
+                <div className="conversation-icon"><MessageCircle size={19}/></div>
                 <div><span>Estás conversando con</span><strong>{activeConversation.name}</strong><small>{activeConversation.howToFindMe ? `Cómo encontrarle: ${activeConversation.howToFindMe}` : "Conversación activa"}</small></div>
-                <button type="button" onClick={endActiveConversation} disabled={conversationEnding}>{conversationEnding ? "Finalizando…" : "Plática concluida"}</button>
+                <button type="button" onClick={endActiveConversation} disabled={conversationEnding || activeConversation.id <= 0}>{conversationEnding ? "Finalizando…" : activeConversation.id <= 0 ? "Sincronizando…" : "Plática concluida"}</button>
               </div>
             )}
             {pendingIncomingCount > 0 && (
               <button className="incoming-alert" onClick={async () => { await loadRequests(); setView("requests"); }}>
-                <Bell size={18} /><div><strong>{pendingIncomingCount === 1 ? "Alguien quiere saludarte" : `${pendingIncomingCount} personas quieren saludarte`}</strong><span>Toca para revisar la solicitud.</span></div><span className="incoming-alert-arrow">›</span>
+                <Bell size={18}/><div><strong>{pendingIncomingCount === 1 ? "Alguien quiere saludarte" : `${pendingIncomingCount} personas quieren saludarte`}</strong><span>Toca para revisar la solicitud.</span></div><span className="incoming-alert-arrow">›</span>
               </button>
             )}
             <div className="people-cloud" aria-label="Personas disponibles cerca. La posición de las burbujas es ilustrativa.">
               <div className="cloud-note">Las posiciones son ilustrativas</div>
-              {people.slice(0, 10).map((p, i) => (
+              {people.slice(0,10).map((p, i) => (
                 <button key={p.id} className={`person-bubble ${p.socialStatus === "busy" ? "busy" : ""}`} style={{ left: bubblePositions[i].left, top: bubblePositions[i].top, transform: `translate(-50%,-50%) scale(${bubblePositions[i].scale})` }} onClick={() => openPerson(p)}>
                   <span className="intent-tag">{p.intent}</span>
-                  {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name} /> : <span className="avatar-fallback locked-avatar"><UserRound size={28} /></span>}
+                  {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name}/> : <span className="avatar-fallback locked-avatar"><UserRound size={28}/></span>}
                   <strong>{p.name}</strong><small>{p.socialStatus === "busy" ? "Ocupado" : "Disponible"}</small>
                 </button>
               ))}
               <button className={`my-bubble ${activeConversation ? "busy" : ""}`} onClick={() => openMyProfile()} aria-label="Abrir mi perfil">
-                {avatarUrl ? <img src={avatarUrl} alt="Tu perfil" /> : <span className="my-avatar-empty"><UserRound size={30} /></span>}
+                {avatarUrl ? <img src={avatarUrl} alt="Tu perfil"/> : <span className="my-avatar-empty"><UserRound size={30}/></span>}
                 <strong>Tú</strong>
                 <small>{profileComplete ? (activeConversation ? "Ocupado" : mood) : "Completar perfil"}</small>
               </button>
             </div>
             <div className="radar-update-zone">
               <button className="profile-update-button" type="button" onClick={updatePresenceAndNearby} disabled={profileUpdating || locating}>
-                <RefreshCw size={19} className={profileUpdating ? "spin" : ""} />
+                <RefreshCw size={19} className={profileUpdating ? "spin" : ""}/>
                 {profileUpdating ? "Actualizando…" : "Actualizar"}
               </button>
               <p>Actualiza tu ubicación, estado y las personas que aparecen en tu entorno.</p>
@@ -1004,35 +1064,35 @@ export default function Home() {
 
         {view === "profile" && selected && (
           <div className="content-pad profile-screen">
-            <button className="back" onClick={() => setView("radar")}><ArrowLeft size={20} /> Personas cerca</button>
+            <button className="back" onClick={() => setView("radar")}><ArrowLeft size={20}/> Personas cerca</button>
             <div className="profile-avatar-wrap">
-              {profileComplete && selected.avatar ? <img src={selected.avatar} alt={selected.name} /> : <div className="profile-photo-locked"><UserRound size={42} /><span>Completa tu perfil para ver fotos</span></div>}
+              {profileComplete && selected.avatar ? <img src={selected.avatar} alt={selected.name}/> : <div className="profile-photo-locked"><UserRound size={42}/><span>Completa tu perfil para ver fotos</span></div>}
               <span>{selected.intent}</span>
             </div>
             <h2>{selected.name}</h2><p>{selected.bio}</p>
-            <div className={`availability-pill ${selected.socialStatus === "busy" ? "busy" : ""}`}><span className="availability-dot" /> {selected.socialStatus === "busy" ? "Ocupado en una conversación" : "Disponible cerca de ti"}</div>
+            <div className={`availability-pill ${selected.socialStatus === "busy" ? "busy" : ""}`}><span className="availability-dot"/> {selected.socialStatus === "busy" ? "Ocupado en una conversación" : "Disponible cerca de ti"}</div>
             <div className="section-card"><span className="section-label">Intereses</span><div className="chips">{selected.interests.map(x => <span key={x}>{x}</span>)}</div></div>
-            <div className="permission-copy"><Hand size={22} /><div><strong>No mostramos dónde está exactamente.</strong><span>“Cómo encontrarme” permanece oculto hasta que exista consentimiento. Quien recibe una solicitud sí puede identificar primero a quien la envió.</span></div></div>
+            <div className="permission-copy"><Hand size={22}/><div><strong>No mostramos dónde está exactamente.</strong><span>“Cómo encontrarme” permanece oculto hasta que exista consentimiento. Quien recibe una solicitud sí puede identificar primero a quien la envió.</span></div></div>
             {requestNotice && <div className="auth-feedback error">{requestNotice}</div>}
-            {selected.socialStatus === "busy" ? <button className="primary busy-disabled" disabled><MessageCircle size={19} /> Ocupado</button> : activeConversation ? <button className="primary busy-disabled" disabled><MessageCircle size={19} /> Estás ocupado</button> : <button className="primary" onClick={() => requestHello(selected)}><Hand size={19} /> Quiero saludarle</button>}
+            {selected.socialStatus === "busy" ? <button className="primary busy-disabled" disabled><MessageCircle size={19}/> Ocupado</button> : activeConversation ? <button className="primary busy-disabled" disabled><MessageCircle size={19}/> Estás ocupado</button> : <button className="primary" onClick={() => requestHello(selected)}><Hand size={19}/> Quiero saludarle</button>}
           </div>
         )}
 
         {view === "myProfile" && (
           <div className="content-pad onboarding-screen my-profile-screen">
-            <button className="back" onClick={() => { setProfilePrompt(""); setPendingPerson(null); setView("radar"); }}><ArrowLeft size={20} /> Personas cerca</button>
+            <button className="back" onClick={() => { setProfilePrompt(""); setPendingPerson(null); setView("radar"); }}><ArrowLeft size={20}/> Personas cerca</button>
             <span className="subtle">Mi perfil</span><h2>{profileComplete ? "Tu perfil Circle" : "Completa tu perfil"}</h2>
-            {profilePrompt ? <div className="profile-prompt"><ShieldCheck size={18} /><span>{profilePrompt}</span></div> : <p>Esta es la información que las personas cercanas usan para decidir si quieren conocerte.</p>}
+            {profilePrompt ? <div className="profile-prompt"><ShieldCheck size={18}/><span>{profilePrompt}</span></div> : <p>Esta es la información que las personas cercanas usan para decidir si quieren conocerte.</p>}
 
             <input ref={fileInputRef} className="hidden-file-input" type="file" accept="image/*" onChange={e => { onPhotoSelected(e.target.files?.[0]); e.currentTarget.value = ""; }} />
             <button type="button" className={`avatar-picker ${avatarUrl ? "has-photo" : ""}`} onClick={choosePhoto}>
-              {avatarUrl ? <img src={avatarUrl} alt="Tu foto" /> : <><Camera size={28} /><strong>Agregar foto</strong><span>Desde tu galería</span></>}
-              {avatarUrl && <span className="avatar-edit-badge"><Camera size={16} /></span>}
+              {avatarUrl ? <img src={avatarUrl} alt="Tu foto"/> : <><Camera size={28}/><strong>Agregar foto</strong><span>Desde tu galería</span></>}
+              {avatarUrl && <span className="avatar-edit-badge"><Camera size={16}/></span>}
             </button>
             <p className="avatar-help">Toca la foto para cambiarla. Podrás encuadrarla antes de guardar.</p>
 
-            <label>Nombre<input value={name} onChange={e => setName(e.target.value)} placeholder="Tu nombre" /></label>
-            <label>Tu descripción<textarea value={bio} onChange={e => setBio(e.target.value)} placeholder="Me gusta viajar, leer y conocer gente nueva." /></label>
+            <label>Nombre<input value={name} onChange={e => setName(e.target.value)} placeholder="Tu nombre"/></label>
+            <label>Tu descripción<textarea value={bio} onChange={e => setBio(e.target.value)} placeholder="Me gusta viajar, leer y conocer gente nueva."/></label>
 
             <div className="field-label">Mood</div>
             <div className="chips selectable mood-grid">{moodOptions.map(x => <button type="button" key={x} className={mood === x ? "selected" : ""} onClick={() => setMood(x)}>{x}</button>)}</div>
@@ -1040,8 +1100,8 @@ export default function Home() {
             <div className="field-label">Intereses <span className="optional">(elige hasta 5)</span></div>
             <div className="chips selectable">{interestOptions.map(x => <button type="button" key={x} className={interests.includes(x) ? "selected" : ""} onClick={() => setInterests(v => v.includes(x) ? v.filter(i => i !== x) : v.length < 5 ? [...v, x] : v)}>{x}</button>)}</div>
 
-            <label>Cómo encontrarme <span className="required-mark">(obligatorio)</span><input value={specificLocation} onChange={e => setSpecificLocation(e.target.value)} placeholder="Piso 7, al lado de la ventana, playera azul" required /></label>
-            <p className="privacy-hint"><ShieldCheck size={14} /> Este dato permanece oculto. Solo quien reciba una solicitud tuya podrá verlo; si tú recibes una solicitud, la otra persona solo lo verá después de que aceptes.</p>
+            <label>Cómo encontrarme <span className="required-mark">(obligatorio)</span><input value={specificLocation} onChange={e => setSpecificLocation(e.target.value)} placeholder="Piso 7, al lado de la ventana, playera azul" required/></label>
+            <p className="privacy-hint"><ShieldCheck size={14}/> Este dato permanece oculto. Solo quien reciba una solicitud tuya podrá verlo; si tú recibes una solicitud, la otra persona solo lo verá después de que aceptes.</p>
 
             {profileError && <div className="auth-feedback error">{profileError}</div>}
             <button className="primary" onClick={saveProfile} disabled={profileSaving}>{profileSaving ? "Guardando…" : pendingPerson ? "Guardar y enviar solicitud" : "Guardar perfil"}</button>
@@ -1052,34 +1112,34 @@ export default function Home() {
 
         {view === "requests" && (
           <div className="content-pad requests-screen">
-            <button className="back" onClick={() => setView("radar")}><ArrowLeft size={20} /> Personas cerca</button>
+            <button className="back" onClick={() => setView("radar")}><ArrowLeft size={20}/> Personas cerca</button>
             <span className="subtle">Solicitudes</span>
             <h2>{pendingIncomingCount ? `${pendingIncomingCount} ${pendingIncomingCount === 1 ? "persona quiere" : "personas quieren"} saludarte` : "Tus solicitudes"}</h2>
             <p>Antes de aceptar puedes identificar a quien quiere acercarse. Tu “Cómo encontrarme” sigue oculto hasta que tú aceptes.</p>
             {requestNotice && <div className="auth-feedback success">{requestNotice}</div>}
-            {requestsLoading ? <div className="requests-empty">Cargando solicitudes…</div> : requests.length === 0 ? <div className="requests-empty"><Hand size={26} /><strong>Aún no tienes solicitudes</strong><span>Cuando alguien quiera saludarte aparecerá aquí.</span></div> : (
+            {requestsLoading ? <div className="requests-empty">Cargando solicitudes…</div> : requests.length === 0 ? <div className="requests-empty"><Hand size={26}/><strong>Aún no tienes solicitudes</strong><span>Cuando alguien quiera saludarte aparecerá aquí.</span></div> : (
               <div className="request-list">
                 {requests.map(request => (
                   <article className={`request-card ${request.status}`} key={request.id}>
                     <div className="request-person">
-                      {request.avatar ? <img src={request.avatar} alt={request.name} /> : <span className="request-avatar-fallback"><UserRound size={25} /></span>}
+                      {request.avatar ? <img src={request.avatar} alt={request.name}/> : <span className="request-avatar-fallback"><UserRound size={25}/></span>}
                       <div><span className="request-direction">{request.direction === "incoming" ? "Quiere saludarte" : "Solicitud enviada"}</span><h3>{request.name}</h3><small>{request.intent}</small></div>
                       <span className={`request-status status-${request.status}`}>{request.status === "pending" ? "Pendiente" : request.status === "accepted" ? "Aceptada" : request.status === "declined" ? "Rechazada" : "Cancelada"}</span>
                     </div>
                     <p className="request-bio">{request.bio}</p>
-                    {!!request.interests.length && <div className="chips request-chips">{request.interests.slice(0, 5).map(x => <span key={x}>{x}</span>)}</div>}
+                    {!!request.interests.length && <div className="chips request-chips">{request.interests.slice(0,5).map(x => <span key={x}>{x}</span>)}</div>}
                     {request.howToFindMe && (
-                      <div className="how-to-find-card"><MapPin size={19} /><div><span>Cómo encontrarme</span><strong>{request.howToFindMe}</strong></div></div>
+                      <div className="how-to-find-card"><MapPin size={19}/><div><span>Cómo encontrarme</span><strong>{request.howToFindMe}</strong></div></div>
                     )}
                     {request.direction === "incoming" && request.status === "pending" && activeConversation && <div className="waiting-copy">Termina tu conversación actual antes de aceptar otra solicitud.</div>}
                     {request.direction === "incoming" && request.status === "pending" && !activeConversation && (
                       <div className="request-actions">
                         <button className="decline-request" disabled={requestActionId === request.id} onClick={() => respondToRequest(request, "declined")}>Ahora no</button>
-                        <button className="accept-request" disabled={requestActionId === request.id} onClick={() => respondToRequest(request, "accepted")}><Check size={18} />{requestActionId === request.id ? "Procesando…" : "Puede acercarse"}</button>
+                        <button className="accept-request" disabled={requestActionId === request.id} onClick={() => respondToRequest(request, "accepted")}><Check size={18}/>{requestActionId === request.id ? "Procesando…" : "Puede acercarse"}</button>
                       </div>
                     )}
                     {request.direction === "outgoing" && request.status === "pending" && <div className="waiting-copy">Esperando respuesta. Su ubicación sigue oculta.</div>}
-                    {request.direction === "outgoing" && request.status === "accepted" && request.howToFindMe && <div className="accepted-copy"><Check size={16} /> Ya puedes acercarte a saludarle. Ambos aparecen como ocupados hasta finalizar la plática.</div>}
+                    {request.direction === "outgoing" && request.status === "accepted" && request.howToFindMe && <div className="accepted-copy"><Check size={16}/> Ya puedes acercarte a saludarle. Ambos aparecen como ocupados hasta finalizar la plática.</div>}
                   </article>
                 ))}
               </div>
@@ -1093,7 +1153,7 @@ export default function Home() {
             <span className="subtle">Solicitud lista</span>
             <h2>Solicitud enviada</h2>
             <p>{pendingPerson?.simulated ? `Este perfil de muestra permite recorrer el flujo de Circle sin afectar a otro usuario.` : `Le avisamos a ${pendingPerson?.name || "la persona"}. Si acepta, Circle revelará su “Cómo encontrarme” para que puedas acercarte.`}</p>
-            <div className="section-card safety"><ShieldCheck size={22} /><div><strong>Consentimiento primero</strong><span>Tu GPS nunca se comparte. “Cómo encontrarme” solo se revela según las reglas de consentimiento de la solicitud.</span></div></div>
+            <div className="section-card safety"><ShieldCheck size={22}/><div><strong>Consentimiento primero</strong><span>Tu GPS nunca se comparte. “Cómo encontrarme” solo se revela según las reglas de consentimiento de la solicitud.</span></div></div>
             <button className="primary" onClick={async () => { setPendingPerson(null); await searchNearby(); }}>Volver a personas cerca</button>
           </div>
         )}
@@ -1102,12 +1162,12 @@ export default function Home() {
       {connectionNotice && (
         <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Conexión hecha">
           <div className="connection-sheet">
-            <div className="connection-success-icon"><Check size={34} /></div>
+            <div className="connection-success-icon"><Check size={34}/></div>
             <span className="subtle">Conexión confirmada</span>
             <h2>¡Conexión hecha!</h2>
             <p><strong>{connectionNotice.name}</strong> aceptó tu solicitud. Ya puedes acercarte a saludarle.</p>
             <div className="connection-location-card">
-              <MapPin size={21} />
+              <MapPin size={21}/>
               <div><span>Cómo encontrarle</span><strong>{connectionNotice.howToFindMe || "La persona no agregó una referencia."}</strong></div>
             </div>
             <button className="primary" onClick={() => { acknowledgeConnection(connectionNoticeRequestId); setConnectionNoticeRequestId(null); setConnectionNotice(null); setPendingPerson(null); setView("radar"); }}>Entendido</button>
@@ -1118,14 +1178,14 @@ export default function Home() {
       {cropSource && (
         <div className="crop-modal" role="dialog" aria-modal="true" aria-label="Encuadrar foto de perfil">
           <div className="crop-sheet">
-            <div className="crop-header"><div><span className="subtle">Foto de perfil</span><h3>Encuadra tu foto</h3></div><button type="button" onClick={() => { if (cropSource.startsWith("blob:")) URL.revokeObjectURL(cropSource); setCropSource(""); }} aria-label="Cerrar"><X size={21} /></button></div>
+            <div className="crop-header"><div><span className="subtle">Foto de perfil</span><h3>Encuadra tu foto</h3></div><button type="button" onClick={() => { if (cropSource.startsWith("blob:")) URL.revokeObjectURL(cropSource); setCropSource(""); }} aria-label="Cerrar"><X size={21}/></button></div>
             <p>Mueve la imagen con el dedo y usa el control para acercar o alejar.</p>
             <div className="crop-stage" onPointerDown={handleCropPointerDown} onPointerMove={handleCropPointerMove} onPointerUp={handleCropPointerUp} onPointerCancel={handleCropPointerUp}>
-              <img ref={cropImageRef} src={cropSource} alt="Foto por recortar" draggable={false} onLoad={e => { const img = e.currentTarget; setCropImageSize({ width: img.naturalWidth, height: img.naturalHeight }); setCropOffset({ x: 0, y: 0 }); }} style={cropImageSize.width ? (() => { const g = cropGeometry(); return { width: g.renderedWidth, height: g.renderedHeight, transform: `translate(calc(-50% + ${cropOffset.x}px), calc(-50% + ${cropOffset.y}px))` }; })() : undefined} />
+              <img ref={cropImageRef} src={cropSource} alt="Foto por recortar" draggable={false} onLoad={e => { const img = e.currentTarget; setCropImageSize({ width: img.naturalWidth, height: img.naturalHeight }); setCropOffset({ x: 0, y: 0 }); }} style={cropImageSize.width ? (() => { const g = cropGeometry(); return { width: g.renderedWidth, height: g.renderedHeight, transform: `translate(calc(-50% + ${cropOffset.x}px), calc(-50% + ${cropOffset.y}px))` }; })() : undefined}/>
               <div className="crop-mask" />
             </div>
-            <label className="zoom-control">Zoom<input type="range" min="1" max="3" step="0.01" value={cropZoom} onChange={e => { const next = Number(e.target.value); setCropZoom(next); setCropOffset(current => clampOffset(current, next)); }} /></label>
-            <div className="crop-actions"><button type="button" className="secondary" onClick={choosePhoto}>Elegir otra</button><button type="button" className="primary" onClick={acceptCrop}><Check size={18} /> Usar foto</button></div>
+            <label className="zoom-control">Zoom<input type="range" min="1" max="3" step="0.01" value={cropZoom} onChange={e => { const next = Number(e.target.value); setCropZoom(next); setCropOffset(current => clampOffset(current, next)); }}/></label>
+            <div className="crop-actions"><button type="button" className="secondary" onClick={choosePhoto}>Elegir otra</button><button type="button" className="primary" onClick={acceptCrop}><Check size={18}/> Usar foto</button></div>
           </div>
         </div>
       )}
