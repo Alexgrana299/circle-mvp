@@ -134,6 +134,17 @@ function makeCloudLayout(count: number) {
   };
 }
 
+function mapEmbedUrl(coords: { lat: number; lng: number } | null) {
+  if (!coords) return "";
+  const latSpan = 0.0032;
+  const lngSpan = 0.0042;
+  const left = coords.lng - lngSpan;
+  const right = coords.lng + lngSpan;
+  const bottom = coords.lat - latSpan;
+  const top = coords.lat + latSpan;
+  return `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(`${left},${bottom},${right},${top}`)}&layer=mapnik`;
+}
+
 function isProfileComplete(profile: { name: string; bio: string; avatar: string; interests: string[]; mood: string; howToFindMe: string }) {
   return Boolean(
     profile.name.trim() &&
@@ -1080,15 +1091,7 @@ export default function Home() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [isAuthenticated, profileComplete, view, coords?.lat, coords?.lng]);
 
-  function fitPeopleCanvas() {
-    const el = peopleCanvasRef.current;
-    if (!el) return;
-    const padding = 22;
-    const fitX = Math.max(0.28, (el.clientWidth - padding) / cloudLayout.width);
-    const fitY = Math.max(0.28, (el.clientHeight - padding) / cloudLayout.height);
-    const nextZoom = Math.min(1, fitX, fitY);
-    setCanvasZoom(nextZoom);
-
+  function centerPeopleCanvas() {
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
         const current = peopleCanvasRef.current;
@@ -1097,6 +1100,31 @@ export default function Home() {
         current.scrollTop = Math.max(0, (current.scrollHeight - current.clientHeight) / 2);
       });
     });
+  }
+
+  function fitPeopleCanvas() {
+    const el = peopleCanvasRef.current;
+    if (!el) return;
+    const padding = 22;
+    const fitX = Math.max(0.28, (el.clientWidth - padding) / cloudLayout.width);
+    const fitY = Math.max(0.28, (el.clientHeight - padding) / cloudLayout.height);
+    const nextZoom = Math.min(1, fitX, fitY);
+    setCanvasZoom(nextZoom);
+    centerPeopleCanvas();
+  }
+
+  function setComfortableCanvasZoom() {
+    const el = peopleCanvasRef.current;
+    if (!el) return;
+    const padding = 22;
+    const fitX = Math.max(0.28, (el.clientWidth - padding) / cloudLayout.width);
+    const fitY = Math.max(0.28, (el.clientHeight - padding) / cloudLayout.height);
+    const exactFit = Math.min(1, fitX, fitY);
+    // Entry view: keep people readable and show a useful overview. Users can tap Fit to see absolutely everyone.
+    const comfortableFloor = el.clientWidth <= 480 ? 0.72 : 0.78;
+    const nextZoom = Math.min(1, Math.max(exactFit, comfortableFloor));
+    setCanvasZoom(nextZoom);
+    centerPeopleCanvas();
   }
 
   function changeCanvasZoom(delta: number) {
@@ -1121,12 +1149,12 @@ export default function Home() {
 
   useEffect(() => {
     if (view !== "radar") return;
-    const fit = () => fitPeopleCanvas();
-    const frame = window.requestAnimationFrame(fit);
-    window.addEventListener("resize", fit);
+    const initialFit = () => setComfortableCanvasZoom();
+    const frame = window.requestAnimationFrame(initialFit);
+    window.addEventListener("resize", initialFit);
     return () => {
       window.cancelAnimationFrame(frame);
-      window.removeEventListener("resize", fit);
+      window.removeEventListener("resize", initialFit);
     };
   }, [view, cloudLayout.width, cloudLayout.height, people.length]);
 
@@ -1217,6 +1245,16 @@ export default function Home() {
               </button>
             )}
             <div className="people-cloud-frame" aria-label="Personas disponibles cerca. La posición de las burbujas es ilustrativa.">
+              {coords && (
+                <iframe
+                  className="social-map-background"
+                  title="Mapa de referencia de tu zona"
+                  src={mapEmbedUrl(coords)}
+                  loading="lazy"
+                  tabIndex={-1}
+                  aria-hidden="true"
+                />
+              )}
               <div className="people-cloud-scroll" ref={peopleCanvasRef}>
                 <div className="people-cloud-world" style={{ width: `max(100%, ${Math.round(cloudLayout.width * canvasZoom)}px)`, height: `max(100%, ${Math.round(cloudLayout.height * canvasZoom)}px)` }}>
                   <div className="people-cloud-scale-layer" style={{ width: `${cloudLayout.width * canvasZoom}px`, height: `${cloudLayout.height * canvasZoom}px` }}>
@@ -1242,7 +1280,7 @@ export default function Home() {
                 <button type="button" className="fit-control" onClick={fitPeopleCanvas}>Fit</button>
                 <button type="button" onClick={() => changeCanvasZoom(0.12)} aria-label="Acercar">+</button>
               </div>
-              <div className="cloud-note">{Math.round(canvasZoom * 100)}% · desliza para explorar</div>
+              <div className="cloud-note">{Math.round(canvasZoom * 100)}% · mapa de referencia · desliza para explorar</div>
             </div>
             <div className="radar-update-zone">
               <button className="profile-update-button" type="button" onClick={updatePresenceAndNearby} disabled={profileUpdating || locating}>
@@ -1278,7 +1316,7 @@ export default function Home() {
 
             <input ref={fileInputRef} className="hidden-file-input" type="file" accept="image/*" onChange={e => { onPhotoSelected(e.target.files?.[0]); e.currentTarget.value = ""; }} />
             <button type="button" className={`avatar-picker ${avatarUrl ? "has-photo" : ""}`} onClick={choosePhoto}>
-              {avatarUrl ? <img src={avatarUrl} alt="Tu foto"/> : <><Camera size={28}/><strong>Agregar foto</strong><span>Desde tu galería</span></>}
+              {avatarUrl ? <img src={avatarUrl} alt="Tu selfie"/> : <><Camera size={28}/><strong>Selfie</strong><span>Agregar foto desde tu galería</span></>}
               {avatarUrl && <span className="avatar-edit-badge"><Camera size={16}/></span>}
             </button>
             <p className="avatar-help">Toca la foto para cambiarla. Podrás encuadrarla antes de guardar.</p>
@@ -1292,7 +1330,7 @@ export default function Home() {
             <div className="field-label">Intereses <span className="optional">(elige hasta 5)</span></div>
             <div className="chips selectable">{interestOptions.map(x => <button type="button" key={x} className={interests.includes(x) ? "selected" : ""} onClick={() => setInterests(v => v.includes(x) ? v.filter(i => i !== x) : v.length < 5 ? [...v, x] : v)}>{x}</button>)}</div>
 
-            <label>Cómo encontrarme <span className="required-mark">(obligatorio)</span><input value={specificLocation} onChange={e => setSpecificLocation(e.target.value)} placeholder="Piso 7, al lado de la ventana, playera azul" required/></label>
+            <label>Cómo encontrarme<input value={specificLocation} onChange={e => setSpecificLocation(e.target.value)} placeholder="Piso 7, al lado de la ventana, playera azul" required/></label>
             <p className="privacy-hint"><ShieldCheck size={14}/> Este dato permanece oculto. Solo quien reciba una solicitud tuya podrá verlo; si tú recibes una solicitud, la otra persona solo lo verá después de que aceptes.</p>
 
             {profileError && <div className="auth-feedback error">{profileError}</div>}
