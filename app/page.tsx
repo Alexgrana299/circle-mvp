@@ -377,9 +377,18 @@ export default function Home() {
 
   async function updatePresenceAndNearby() {
     setProfileError("");
-    if (!supabase) return setProfileError("Supabase no está conectado.");
-    if (!profileComplete) return setProfileError("Completa y guarda tu perfil antes de actualizar tu presencia.");
-    if (!navigator.geolocation) return setProfileError("Tu navegador no permite obtener la ubicación.");
+    if (!profileComplete) {
+      openMyProfile("Completa tu perfil para activar tu presencia y actualizar las personas cercanas.");
+      return;
+    }
+    if (!supabase) {
+      setStatus("Supabase no está conectado.");
+      return;
+    }
+    if (!navigator.geolocation) {
+      setStatus("Tu navegador no permite obtener la ubicación.");
+      return;
+    }
 
     setProfileUpdating(true);
     try {
@@ -431,7 +440,8 @@ export default function Home() {
       setStatus(`${realPeople.length ? `${realPeople.length} ${realPeople.length === 1 ? "persona real activa" : "personas reales activas"} · ` : ""}Actualizado ahora.`);
       setView("radar");
     } catch (error: any) {
-      setProfileError(error?.message || "No pudimos actualizar tu presencia.");
+      setStatus(error?.message || "No pudimos actualizar tu presencia.");
+      setView("radar");
     } finally {
       setProfileUpdating(false);
     }
@@ -567,7 +577,6 @@ export default function Home() {
           <div className="content-pad radar-screen">
             <div className="screen-heading">
               <div><span className="subtle">Personas cerca de ti</span><h2>{nearbyCount} disponibles</h2></div>
-              <button className="icon-button" onClick={searchNearby} aria-label="Actualizar" disabled={locating}><Radio size={20}/></button>
             </div>
             <div className="status-line">{status}</div>
             <div className="people-cloud" aria-label="Personas disponibles cerca. La posición de las burbujas es ilustrativa.">
@@ -584,6 +593,13 @@ export default function Home() {
                 <strong>Tú</strong>
                 <small>{profileComplete ? mood : "Completar perfil"}</small>
               </button>
+            </div>
+            <div className="radar-update-zone">
+              <button className="profile-update-button" type="button" onClick={updatePresenceAndNearby} disabled={profileUpdating || locating}>
+                <RefreshCw size={19} className={profileUpdating ? "spin" : ""}/>
+                {profileUpdating ? "Actualizando…" : "Actualizar"}
+              </button>
+              <p>Actualiza tu ubicación, estado y las personas que aparecen en tu entorno.</p>
             </div>
           </div>
         )}
@@ -632,13 +648,6 @@ export default function Home() {
             <button className="primary" onClick={saveProfile} disabled={profileSaving}>{profileSaving ? "Guardando…" : pendingPerson ? "Guardar y enviar solicitud" : "Guardar perfil"}</button>
             <p className="microcopy center">Las fotos de otras personas se desbloquean cuando completas tu perfil.</p>
 
-            <div className="profile-update-zone">
-              <button className="profile-update-button" type="button" onClick={updatePresenceAndNearby} disabled={profileUpdating}>
-                <RefreshCw size={19} className={profileUpdating ? "spin" : ""}/>
-                {profileUpdating ? "Actualizando…" : "Actualizar"}
-              </button>
-              <p>Actualiza tu mood, ubicación y las personas que aparecen en tu entorno.</p>
-            </div>
           </div>
         )}
 
