@@ -75,3 +75,8 @@ El perfil social (nombre, bio, intereses, mood, foto, ubicación específica) pe
 After the base schema has already been created, run `supabase/profile_upgrade.sql` once in the Supabase SQL Editor. It creates the `avatars` Storage bucket, owner-only upload policies, and updates `nearby_profiles` so avatar URLs are withheld until the viewer has completed their own profile.
 
 A profile is considered complete when it has: photo, name, bio, at least one interest, and a mood. Specific location remains optional.
+
+
+## Actualizar presencia
+
+El botón **Actualizar** en Mi perfil vuelve a pedir la ubicación actual, refresca el mood, la referencia específica, `last_seen` y las personas reales cercanas. Después regresa al panel principal con el entorno actualizado.

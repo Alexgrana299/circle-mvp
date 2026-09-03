@@ -13,6 +13,7 @@ import {
   Mail,
   MapPin,
   Radio,
+  RefreshCw,
   ShieldCheck,
   Sparkles,
   UserRound,
@@ -86,6 +87,7 @@ export default function Home() {
   const [avatarUrl, setAvatarUrl] = useState("");
   const [avatarBlob, setAvatarBlob] = useState<Blob | null>(null);
   const [profileSaving, setProfileSaving] = useState(false);
+  const [profileUpdating, setProfileUpdating] = useState(false);
   const [profileError, setProfileError] = useState("");
   const [profilePrompt, setProfilePrompt] = useState("");
   const [pendingPerson, setPendingPerson] = useState<Person | null>(null);
@@ -373,6 +375,68 @@ export default function Home() {
     setCropSource("");
   }
 
+  async function updatePresenceAndNearby() {
+    setProfileError("");
+    if (!supabase) return setProfileError("Supabase no está conectado.");
+    if (!profileComplete) return setProfileError("Completa y guarda tu perfil antes de actualizar tu presencia.");
+    if (!navigator.geolocation) return setProfileError("Tu navegador no permite obtener la ubicación.");
+
+    setProfileUpdating(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const user = sessionData.session?.user;
+      if (!user) throw new Error("Tu sesión expiró. Inicia sesión nuevamente.");
+
+      const location = await new Promise<{ lat: number; lng: number }>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(
+          ({ coords }) => resolve({ lat: coords.latitude, lng: coords.longitude }),
+          () => reject(new Error("No pudimos obtener tu ubicación. Revisa el permiso de ubicación de Circle.")),
+          { enableHighAccuracy: true, timeout: 7000, maximumAge: 15000 }
+        );
+      });
+
+      // “Actualizar” refresca el mood/estatus y la presencia, sin modificar el resto del perfil.
+      const { error: moodError } = await supabase.from("profiles").update({ intent: mood }).eq("id", user.id);
+      if (moodError) throw moodError;
+
+      const { error: presenceError } = await supabase.from("presence").upsert({
+        user_id: user.id,
+        location: `POINT(${location.lng} ${location.lat})`,
+        specific_location: specificLocation.trim() || null,
+        is_available: true,
+        last_seen: new Date().toISOString(),
+      });
+      if (presenceError) throw presenceError;
+
+      setCoords(location);
+      const { data, error } = await supabase.rpc("nearby_profiles", {
+        user_lat: location.lat,
+        user_lng: location.lng,
+        radius_meters: radius,
+      });
+      if (error) throw error;
+
+      const realPeople: Person[] = data?.length ? data.map((p: any) => ({
+        id: p.id,
+        name: p.display_name || "Alguien cerca",
+        initials: (p.display_name || "C").slice(0, 1).toUpperCase(),
+        bio: p.bio || "Disponible para socializar.",
+        intent: p.intent || "Charlar",
+        interests: p.interests || [],
+        avatar: p.avatar_url || "",
+        simulated: false,
+      })) : [];
+
+      setPeople([...realPeople.slice(0, 5), ...demoPeople].slice(0, 10));
+      setStatus(`${realPeople.length ? `${realPeople.length} ${realPeople.length === 1 ? "persona real activa" : "personas reales activas"} · ` : ""}Actualizado ahora.`);
+      setView("radar");
+    } catch (error: any) {
+      setProfileError(error?.message || "No pudimos actualizar tu presencia.");
+    } finally {
+      setProfileUpdating(false);
+    }
+  }
+
   async function saveProfile() {
     setProfileError("");
     if (!name.trim() || !bio.trim() || !avatarUrl || !interests.length || !mood) {
@@ -567,6 +631,14 @@ export default function Home() {
             {profileError && <div className="auth-feedback error">{profileError}</div>}
             <button className="primary" onClick={saveProfile} disabled={profileSaving}>{profileSaving ? "Guardando…" : pendingPerson ? "Guardar y enviar solicitud" : "Guardar perfil"}</button>
             <p className="microcopy center">Las fotos de otras personas se desbloquean cuando completas tu perfil.</p>
+
+            <div className="profile-update-zone">
+              <button className="profile-update-button" type="button" onClick={updatePresenceAndNearby} disabled={profileUpdating}>
+                <RefreshCw size={19} className={profileUpdating ? "spin" : ""}/>
+                {profileUpdating ? "Actualizando…" : "Actualizar"}
+              </button>
+              <p>Actualiza tu mood, ubicación y las personas que aparecen en tu entorno.</p>
+            </div>
           </div>
         )}
 
