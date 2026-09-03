@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, PointerEvent as ReactPointerEvent } from "react";
 import {
   ArrowLeft,
+  Bell,
   Camera,
   Check,
   Eye,
@@ -32,10 +33,24 @@ type Person = {
   simulated?: boolean;
 };
 
-type View = "landing" | "auth" | "radar" | "profile" | "myProfile" | "success";
+type View = "landing" | "auth" | "radar" | "profile" | "myProfile" | "requests" | "success";
 type AuthMode = "login" | "signup";
 
 type CropOffset = { x: number; y: number };
+type SocialRequest = {
+  id: number;
+  direction: "incoming" | "outgoing";
+  status: "pending" | "accepted" | "declined" | "cancelled";
+  otherId: string;
+  name: string;
+  bio: string;
+  avatar: string;
+  interests: string[];
+  intent: string;
+  howToFindMe: string;
+  createdAt: string;
+};
+
 
 const moodOptions = ["Networking", "Entrenar", "Charlar", "Hacer amigos"];
 const interestOptions = ["Viajes", "Libros", "Café", "Startups", "Running", "Tecnología", "Música", "Arte", "Negocios"];
@@ -92,6 +107,10 @@ export default function Home() {
   const [profileError, setProfileError] = useState("");
   const [profilePrompt, setProfilePrompt] = useState("");
   const [pendingPerson, setPendingPerson] = useState<Person | null>(null);
+  const [requests, setRequests] = useState<SocialRequest[]>([]);
+  const [requestsLoading, setRequestsLoading] = useState(false);
+  const [requestActionId, setRequestActionId] = useState<number | null>(null);
+  const [requestNotice, setRequestNotice] = useState("");
 
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
@@ -114,6 +133,7 @@ export default function Home() {
   const radius = Number(process.env.NEXT_PUBLIC_NEARBY_RADIUS_METERS || 75);
   const profileComplete = useMemo(() => isProfileComplete({ name, bio, avatar: avatarUrl, interests, mood, howToFindMe: specificLocation }), [name, bio, avatarUrl, interests, mood, specificLocation]);
   const nearbyCount = useMemo(() => people.length, [people]);
+  const pendingIncomingCount = useMemo(() => requests.filter(r => r.direction === "incoming" && r.status === "pending").length, [requests]);
 
   async function loadOwnProfile() {
     if (!supabase) return;
@@ -146,6 +166,7 @@ export default function Home() {
     if (data.session) {
       setIsAuthenticated(true);
       await loadOwnProfile();
+      await loadRequests(true);
       await searchNearby();
       return;
     }
@@ -171,6 +192,7 @@ export default function Home() {
         if (!data.session) throw new Error("No se pudo iniciar la sesión.");
         setIsAuthenticated(true);
         await loadOwnProfile();
+        await loadRequests(true);
         await searchNearby();
       } else {
         const { data, error } = await supabase.auth.signUp({ email: normalizedEmail, password });
@@ -178,6 +200,7 @@ export default function Home() {
         if (data.session) {
           setIsAuthenticated(true);
           await loadOwnProfile();
+          await loadRequests(true);
           await searchNearby();
         } else {
           setAuthMessage("Cuenta creada. Revisa tu correo para confirmar tu cuenta y después inicia sesión.");
@@ -199,6 +222,7 @@ export default function Home() {
     setIsAuthenticated(false);
     setPeople(demoPeople);
     setSelected(null);
+    setRequests([]);
     setName(""); setBio(""); setSpecificLocation(""); setInterests([]); setMood(""); setAvatarUrl(""); setAvatarBlob(null);
     setView("landing");
   }
@@ -245,7 +269,7 @@ export default function Home() {
       })) : [];
 
       setPeople([...realPeople.slice(0, 5), ...demoPeople].slice(0, 10));
-      setStatus(`${realPeople.length ? `${realPeople.length} ${realPeople.length === 1 ? "persona real activa" : "personas reales activas"} · ` : ""}Circle mantiene personas de ejemplo visibles para las demos.`);
+      setStatus("Personas disponibles actualizadas.");
       setLocating(false);
       setView("radar");
     }, () => {
@@ -267,12 +291,56 @@ export default function Home() {
     setView("myProfile");
   }
 
+  async function loadRequests(silent = false) {
+    if (!supabase) return;
+    if (!silent) setRequestsLoading(true);
+    try {
+      const { data, error } = await supabase.rpc("my_social_requests");
+      if (error) throw error;
+      const normalized: SocialRequest[] = (data || []).map((r: any) => ({
+        id: Number(r.id),
+        direction: r.direction,
+        status: r.status,
+        otherId: r.other_id,
+        name: r.display_name || "Usuario Circle",
+        bio: r.bio || "Disponible para socializar.",
+        avatar: r.avatar_url || "",
+        interests: r.interests || [],
+        intent: r.intent || "Charlar",
+        howToFindMe: r.how_to_find_me || "",
+        createdAt: r.created_at,
+      }));
+      setRequests(normalized);
+    } catch (error: any) {
+      if (!silent) setRequestNotice(error?.message || "No pudimos cargar tus solicitudes.");
+    } finally {
+      if (!silent) setRequestsLoading(false);
+    }
+  }
+
   async function sendRequest(person: Person) {
     if (!person.simulated && supabase) {
-      const { error } = await supabase.from("social_requests").insert({ receiver_id: person.id });
+      const { error } = await supabase.rpc("send_social_request", { p_receiver_id: person.id });
       if (error) throw error;
+      await loadRequests(true);
     }
     setView("success");
+  }
+
+  async function respondToRequest(request: SocialRequest, decision: "accepted" | "declined") {
+    if (!supabase) return;
+    setRequestActionId(request.id);
+    setRequestNotice("");
+    try {
+      const { error } = await supabase.rpc("respond_social_request", { p_request_id: request.id, p_decision: decision });
+      if (error) throw error;
+      setRequestNotice(decision === "accepted" ? `Aceptaste a ${request.name}. Ahora puede ver cómo encontrarte.` : `Rechazaste la solicitud de ${request.name}.`);
+      await loadRequests(true);
+    } catch (error: any) {
+      setRequestNotice(error?.message || "No pudimos actualizar la solicitud.");
+    } finally {
+      setRequestActionId(null);
+    }
   }
 
   async function requestHello(person: Person) {
@@ -528,11 +596,23 @@ export default function Home() {
     if (!supabase) return;
     supabase.auth.getSession().then(async ({ data }) => {
       setIsAuthenticated(Boolean(data.session));
-      if (data.session) await loadOwnProfile();
+      if (data.session) {
+        await loadOwnProfile();
+        await loadRequests(true);
+      }
     });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => setIsAuthenticated(Boolean(session)));
+    const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      setIsAuthenticated(Boolean(session));
+      if (session) await loadRequests(true);
+    });
     return () => listener.subscription.unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated || !supabase) return;
+    const timer = window.setInterval(() => loadRequests(true), 5000);
+    return () => window.clearInterval(timer);
+  }, [isAuthenticated]);
 
   return (
     <main className="page-shell">
@@ -543,7 +623,13 @@ export default function Home() {
           <button className="brand" onClick={() => setView("landing")}>Circle</button>
           <div className="topbar-actions">
             {isAuthenticated && view !== "landing" && view !== "auth" && (
-              <button className="logout-button" onClick={signOut} aria-label="Cerrar sesión" title="Cerrar sesión"><LogOut size={17}/></button>
+              <>
+                <button className="notification-button" onClick={async () => { await loadRequests(); setView("requests"); }} aria-label="Solicitudes" title="Solicitudes">
+                  <Bell size={18}/>
+                  {pendingIncomingCount > 0 && <span className="notification-badge">{pendingIncomingCount > 9 ? "9+" : pendingIncomingCount}</span>}
+                </button>
+                <button className="logout-button" onClick={signOut} aria-label="Cerrar sesión" title="Cerrar sesión"><LogOut size={17}/></button>
+              </>
             )}
           </div>
         </header>
@@ -591,6 +677,11 @@ export default function Home() {
               <div><span className="subtle">Personas cerca de ti</span><h2>{nearbyCount} disponibles</h2></div>
             </div>
             <div className="status-line">{status}</div>
+            {pendingIncomingCount > 0 && (
+              <button className="incoming-alert" onClick={async () => { await loadRequests(); setView("requests"); }}>
+                <Bell size={18}/><div><strong>{pendingIncomingCount === 1 ? "Alguien quiere saludarte" : `${pendingIncomingCount} personas quieren saludarte`}</strong><span>Toca para revisar la solicitud.</span></div><span className="incoming-alert-arrow">›</span>
+              </button>
+            )}
             <div className="people-cloud" aria-label="Personas disponibles cerca. La posición de las burbujas es ilustrativa.">
               <div className="cloud-note">Las posiciones son ilustrativas</div>
               {people.slice(0,10).map((p, i) => (
@@ -663,12 +754,48 @@ export default function Home() {
           </div>
         )}
 
+        {view === "requests" && (
+          <div className="content-pad requests-screen">
+            <button className="back" onClick={() => setView("radar")}><ArrowLeft size={20}/> Personas cerca</button>
+            <span className="subtle">Solicitudes</span>
+            <h2>{pendingIncomingCount ? `${pendingIncomingCount} ${pendingIncomingCount === 1 ? "persona quiere" : "personas quieren"} saludarte` : "Tus solicitudes"}</h2>
+            <p>Antes de aceptar puedes identificar a quien quiere acercarse. Tu “Cómo encontrarme” sigue oculto hasta que tú aceptes.</p>
+            {requestNotice && <div className="auth-feedback success">{requestNotice}</div>}
+            {requestsLoading ? <div className="requests-empty">Cargando solicitudes…</div> : requests.length === 0 ? <div className="requests-empty"><Hand size={26}/><strong>Aún no tienes solicitudes</strong><span>Cuando alguien quiera saludarte aparecerá aquí.</span></div> : (
+              <div className="request-list">
+                {requests.map(request => (
+                  <article className={`request-card ${request.status}`} key={request.id}>
+                    <div className="request-person">
+                      {request.avatar ? <img src={request.avatar} alt={request.name}/> : <span className="request-avatar-fallback"><UserRound size={25}/></span>}
+                      <div><span className="request-direction">{request.direction === "incoming" ? "Quiere saludarte" : "Solicitud enviada"}</span><h3>{request.name}</h3><small>{request.intent}</small></div>
+                      <span className={`request-status status-${request.status}`}>{request.status === "pending" ? "Pendiente" : request.status === "accepted" ? "Aceptada" : request.status === "declined" ? "Rechazada" : "Cancelada"}</span>
+                    </div>
+                    <p className="request-bio">{request.bio}</p>
+                    {!!request.interests.length && <div className="chips request-chips">{request.interests.slice(0,5).map(x => <span key={x}>{x}</span>)}</div>}
+                    {request.howToFindMe && (
+                      <div className="how-to-find-card"><MapPin size={19}/><div><span>Cómo encontrarme</span><strong>{request.howToFindMe}</strong></div></div>
+                    )}
+                    {request.direction === "incoming" && request.status === "pending" && (
+                      <div className="request-actions">
+                        <button className="decline-request" disabled={requestActionId === request.id} onClick={() => respondToRequest(request, "declined")}>Ahora no</button>
+                        <button className="accept-request" disabled={requestActionId === request.id} onClick={() => respondToRequest(request, "accepted")}><Check size={18}/>{requestActionId === request.id ? "Procesando…" : "Puede acercarse"}</button>
+                      </div>
+                    )}
+                    {request.direction === "outgoing" && request.status === "pending" && <div className="waiting-copy">Esperando respuesta. Su ubicación sigue oculta.</div>}
+                    {request.direction === "outgoing" && request.status === "accepted" && request.howToFindMe && <div className="accepted-copy"><Check size={16}/> Ya puedes acercarte a saludarle.</div>}
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {view === "success" && (
           <div className="content-pad success-screen">
             <div className="success-icon">✓</div>
             <span className="subtle">Solicitud lista</span>
-            <h2>{pendingPerson?.simulated ? "Solicitud simulada enviada" : "Solicitud enviada"}</h2>
-            <p>{pendingPerson?.simulated ? `${pendingPerson?.name || "La persona"} representa cómo funcionará la solicitud durante la demo.` : `Le avisamos a ${pendingPerson?.name || "la persona"}. Si acepta, Circle revelará su “Cómo encontrarme” para que puedas acercarte.`}</p>
+            <h2>Solicitud enviada</h2>
+            <p>{pendingPerson?.simulated ? `Este perfil de muestra permite recorrer el flujo de Circle sin afectar a otro usuario.` : `Le avisamos a ${pendingPerson?.name || "la persona"}. Si acepta, Circle revelará su “Cómo encontrarme” para que puedas acercarte.`}</p>
             <div className="section-card safety"><ShieldCheck size={22}/><div><strong>Consentimiento primero</strong><span>Tu GPS nunca se comparte. “Cómo encontrarme” solo se revela según las reglas de consentimiento de la solicitud.</span></div></div>
             <button className="primary" onClick={async () => { setPendingPerson(null); await searchNearby(); }}>Volver a personas cerca</button>
           </div>
