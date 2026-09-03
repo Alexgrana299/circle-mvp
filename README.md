@@ -87,3 +87,22 @@ El botón **Actualizar** en Mi perfil vuelve a pedir la ubicación actual, refre
 El campo visible como **Cómo encontrarme** es obligatorio para considerar un perfil completo. Internamente se conserva en `presence.specific_location`. Nunca forma parte de `nearby_profiles`.
 
 Ejecuta también `supabase/how_to_find_me_upgrade.sql` una vez. Ese upgrade bloquea la lectura directa de perfiles/presencia de otros usuarios y crea `request_how_to_find_me(request_id)`: el receptor de una solicitud pendiente puede ver la referencia del emisor; el emisor solo puede ver la referencia del receptor después de que la solicitud sea aceptada.
+
+## Conversaciones y presencia social
+
+Ejecuta `supabase/conversations_upgrade.sql` después de `requests_upgrade.sql`.
+
+Este incremento agrega:
+
+- `presence.social_status`: `available` o `busy`.
+- Conversaciones reales 1 a 1 con tablas `conversations` y `conversation_members`.
+- Al aceptar una solicitud, ambas personas pasan a `busy` y siguen visibles en Circle.
+- Una persona ocupada no puede recibir una solicitud normal nueva.
+- Cualquiera de los participantes puede pulsar **Plática concluida**; ambos vuelven a `available`.
+- La estructura de `conversation_members` queda lista para conversaciones de más de dos personas en una futura fase.
+- Circle ya no elimina personas por un timeout de inactividad. La visibilidad depende de `is_available` y de su ubicación registrada.
+- Mientras Circle permanece abierto y el perfil está completo, la PWA observa cambios de ubicación y actualiza Supabase cuando detecta un desplazamiento aproximado de 25 m o más. El radio de búsqueda sigue siendo 75 m por defecto mediante `NEXT_PUBLIC_NEARBY_RADIUS_METERS`.
+
+### Limitación PWA importante
+
+iOS y Android pueden suspender una web/PWA cuando queda en segundo plano. Por ello, el seguimiento de movimiento no es garantizado con la app cerrada o suspendida. El botón **Actualizar** continúa siendo la forma explícita de refrescar ubicación, estado y entorno. El seguimiento fiable en background requerirá una app nativa posterior.

@@ -13,6 +13,7 @@ import {
   LogOut,
   Mail,
   MapPin,
+  MessageCircle,
   Radio,
   RefreshCw,
   ShieldCheck,
@@ -30,6 +31,7 @@ type Person = {
   intent: string;
   interests: string[];
   avatar: string;
+  socialStatus: "available" | "busy";
   simulated?: boolean;
 };
 
@@ -37,6 +39,16 @@ type View = "landing" | "auth" | "radar" | "profile" | "myProfile" | "requests" 
 type AuthMode = "login" | "signup";
 
 type CropOffset = { x: number; y: number };
+type ActiveConversation = {
+  id: number;
+  otherId: string;
+  name: string;
+  avatar: string;
+  intent: string;
+  howToFindMe: string;
+  startedAt: string;
+};
+
 type SocialRequest = {
   id: number;
   direction: "incoming" | "outgoing";
@@ -56,11 +68,11 @@ const moodOptions = ["Networking", "Entrenar", "Charlar", "Hacer amigos"];
 const interestOptions = ["Viajes", "Libros", "Café", "Startups", "Running", "Tecnología", "Música", "Arte", "Negocios"];
 
 const demoPeople: Person[] = [
-  { id: "demo-sofia", name: "Sofía", initials: "S", bio: "Arquitectura. Me gusta leer, viajar y descubrir cafés.", intent: "Charlar", interests: ["Viajes", "Libros", "Café"], avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=240&q=80", simulated: true },
-  { id: "demo-diego", name: "Diego", initials: "D", bio: "Emprendimiento, tecnología y running.", intent: "Networking", interests: ["Startups", "Tecnología", "Running"], avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=240&q=80", simulated: true },
-  { id: "demo-andrea", name: "Andrea", initials: "A", bio: "Diseño, música y conocer gente nueva.", intent: "Hacer amigos", interests: ["Arte", "Música", "Viajes"], avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=240&q=80", simulated: true },
-  { id: "demo-carlos", name: "Carlos", initials: "C", bio: "Negocios, fitness y café.", intent: "Entrenar", interests: ["Negocios", "Running", "Café"], avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=240&q=80", simulated: true },
-  { id: "demo-fer", name: "Fernanda", initials: "F", bio: "Libros, cine y nuevas experiencias.", intent: "Charlar", interests: ["Libros", "Arte", "Viajes"], avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=240&q=80", simulated: true },
+  { id: "demo-sofia", name: "Sofía", initials: "S", bio: "Arquitectura. Me gusta leer, viajar y descubrir cafés.", intent: "Charlar", interests: ["Viajes", "Libros", "Café"], avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
+  { id: "demo-diego", name: "Diego", initials: "D", bio: "Emprendimiento, tecnología y running.", intent: "Networking", interests: ["Startups", "Tecnología", "Running"], avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
+  { id: "demo-andrea", name: "Andrea", initials: "A", bio: "Diseño, música y conocer gente nueva.", intent: "Hacer amigos", interests: ["Arte", "Música", "Viajes"], avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
+  { id: "demo-carlos", name: "Carlos", initials: "C", bio: "Negocios, fitness y café.", intent: "Entrenar", interests: ["Negocios", "Running", "Café"], avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
+  { id: "demo-fer", name: "Fernanda", initials: "F", bio: "Libros, cine y nuevas experiencias.", intent: "Charlar", interests: ["Libros", "Arte", "Viajes"], avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
 ];
 
 const bubblePositions = [
@@ -111,6 +123,8 @@ export default function Home() {
   const [requestsLoading, setRequestsLoading] = useState(false);
   const [requestActionId, setRequestActionId] = useState<number | null>(null);
   const [requestNotice, setRequestNotice] = useState("");
+  const [activeConversation, setActiveConversation] = useState<ActiveConversation | null>(null);
+  const [conversationEnding, setConversationEnding] = useState(false);
 
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
@@ -129,11 +143,24 @@ export default function Home() {
   const dragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
   const cropImageRef = useRef<HTMLImageElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const lastPresenceCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
 
   const radius = Number(process.env.NEXT_PUBLIC_NEARBY_RADIUS_METERS || 75);
   const profileComplete = useMemo(() => isProfileComplete({ name, bio, avatar: avatarUrl, interests, mood, howToFindMe: specificLocation }), [name, bio, avatarUrl, interests, mood, specificLocation]);
   const nearbyCount = useMemo(() => people.length, [people]);
   const pendingIncomingCount = useMemo(() => requests.filter(r => r.direction === "incoming" && r.status === "pending").length, [requests]);
+  const availableNearbyCount = useMemo(() => people.filter(p => p.socialStatus === "available").length, [people]);
+
+  function distanceMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
+    const toRad = (v: number) => v * Math.PI / 180;
+    const R = 6371000;
+    const dLat = toRad(b.lat - a.lat);
+    const dLng = toRad(b.lng - a.lng);
+    const lat1 = toRad(a.lat);
+    const lat2 = toRad(b.lat);
+    const h = Math.sin(dLat/2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng/2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
 
   async function loadOwnProfile() {
     if (!supabase) return;
@@ -193,6 +220,7 @@ export default function Home() {
         setIsAuthenticated(true);
         await loadOwnProfile();
         await loadRequests(true);
+        await loadActiveConversation(true);
         await searchNearby();
       } else {
         const { data, error } = await supabase.auth.signUp({ email: normalizedEmail, password });
@@ -201,6 +229,7 @@ export default function Home() {
           setIsAuthenticated(true);
           await loadOwnProfile();
           await loadRequests(true);
+          await loadActiveConversation(true);
           await searchNearby();
         } else {
           setAuthMessage("Cuenta creada. Revisa tu correo para confirmar tu cuenta y después inicia sesión.");
@@ -218,11 +247,17 @@ export default function Home() {
   }
 
   async function signOut() {
-    if (supabase) await supabase.auth.signOut();
+    if (supabase) {
+      if (activeConversation) await supabase.rpc("end_conversation", { p_conversation_id: activeConversation.id });
+      const { data } = await supabase.auth.getSession();
+      if (data.session?.user) await supabase.from("presence").update({ is_available: false }).eq("user_id", data.session.user.id);
+      await supabase.auth.signOut();
+    }
     setIsAuthenticated(false);
     setPeople(demoPeople);
     setSelected(null);
     setRequests([]);
+    setActiveConversation(null);
     setName(""); setBio(""); setSpecificLocation(""); setInterests([]); setMood(""); setAvatarUrl(""); setAvatarBlob(null);
     setView("landing");
   }
@@ -251,6 +286,9 @@ export default function Home() {
         return;
       }
 
+      await supabase.rpc("update_my_presence_location", { user_lat: location.lat, user_lng: location.lng });
+      lastPresenceCoordsRef.current = location;
+
       const { data, error } = await supabase.rpc("nearby_profiles", {
         user_lat: location.lat,
         user_lng: location.lng,
@@ -265,6 +303,7 @@ export default function Home() {
         intent: p.intent || "Charlar",
         interests: p.interests || [],
         avatar: p.avatar_url || "",
+        socialStatus: p.social_status === "busy" ? "busy" : "available",
         simulated: false,
       })) : [];
 
@@ -318,7 +357,46 @@ export default function Home() {
     }
   }
 
+  async function loadActiveConversation(silent = false) {
+    if (!supabase) return;
+    try {
+      const { data, error } = await supabase.rpc("my_active_conversation");
+      if (error) throw error;
+      const row = Array.isArray(data) ? data[0] : data;
+      setActiveConversation(row ? {
+        id: Number(row.conversation_id),
+        otherId: row.other_id,
+        name: row.display_name || "Usuario Circle",
+        avatar: row.avatar_url || "",
+        intent: row.intent || "Charlar",
+        howToFindMe: row.how_to_find_me || "",
+        startedAt: row.started_at,
+      } : null);
+    } catch (error: any) {
+      if (!silent) setRequestNotice(error?.message || "No pudimos cargar tu conversación activa.");
+    }
+  }
+
+  async function endActiveConversation() {
+    if (!supabase || !activeConversation) return;
+    setConversationEnding(true);
+    setRequestNotice("");
+    try {
+      const { error } = await supabase.rpc("end_conversation", { p_conversation_id: activeConversation.id });
+      if (error) throw error;
+      setActiveConversation(null);
+      setStatus("Conversación finalizada. Vuelves a estar disponible.");
+      await loadRequests(true);
+      if (coords) await refreshNearbyAt(coords, true);
+    } catch (error: any) {
+      setRequestNotice(error?.message || "No pudimos finalizar la conversación.");
+    } finally {
+      setConversationEnding(false);
+    }
+  }
+
   async function sendRequest(person: Person) {
+    if (person.socialStatus === "busy") throw new Error("Esta persona está ocupada en una conversación.");
     if (!person.simulated && supabase) {
       const { error } = await supabase.rpc("send_social_request", { p_receiver_id: person.id });
       if (error) throw error;
@@ -336,6 +414,10 @@ export default function Home() {
       if (error) throw error;
       setRequestNotice(decision === "accepted" ? `Aceptaste a ${request.name}. Ahora puede ver cómo encontrarte.` : `Rechazaste la solicitud de ${request.name}.`);
       await loadRequests(true);
+      if (decision === "accepted") {
+        await loadActiveConversation(true);
+        if (coords) await refreshNearbyAt(coords, true);
+      }
     } catch (error: any) {
       setRequestNotice(error?.message || "No pudimos actualizar la solicitud.");
     } finally {
@@ -444,6 +526,32 @@ export default function Home() {
     setCropSource("");
   }
 
+  async function refreshNearbyAt(location: { lat: number; lng: number }, silent = false) {
+    if (!supabase) return;
+    const { data, error } = await supabase.rpc("nearby_profiles", {
+      user_lat: location.lat,
+      user_lng: location.lng,
+      radius_meters: radius,
+    });
+    if (error) {
+      if (!silent) setStatus(error.message || "No pudimos actualizar las personas cercanas.");
+      return;
+    }
+    const realPeople: Person[] = data?.length ? data.map((p: any) => ({
+      id: p.id,
+      name: p.display_name || "Alguien cerca",
+      initials: (p.display_name || "C").slice(0, 1).toUpperCase(),
+      bio: p.bio || "Disponible para socializar.",
+      intent: p.intent || "Charlar",
+      interests: p.interests || [],
+      avatar: p.avatar_url || "",
+      socialStatus: p.social_status === "busy" ? "busy" : "available",
+      simulated: false,
+    })) : [];
+    setPeople([...realPeople.slice(0, 5), ...demoPeople].slice(0, 10));
+    if (!silent) setStatus(`${realPeople.length ? `${realPeople.length} ${realPeople.length === 1 ? "persona real cerca" : "personas reales cerca"} · ` : ""}Actualizado ahora.`);
+  }
+
   async function updatePresenceAndNearby() {
     setProfileError("");
     if (!profileComplete) {
@@ -487,26 +595,8 @@ export default function Home() {
       if (presenceError) throw presenceError;
 
       setCoords(location);
-      const { data, error } = await supabase.rpc("nearby_profiles", {
-        user_lat: location.lat,
-        user_lng: location.lng,
-        radius_meters: radius,
-      });
-      if (error) throw error;
-
-      const realPeople: Person[] = data?.length ? data.map((p: any) => ({
-        id: p.id,
-        name: p.display_name || "Alguien cerca",
-        initials: (p.display_name || "C").slice(0, 1).toUpperCase(),
-        bio: p.bio || "Disponible para socializar.",
-        intent: p.intent || "Charlar",
-        interests: p.interests || [],
-        avatar: p.avatar_url || "",
-        simulated: false,
-      })) : [];
-
-      setPeople([...realPeople.slice(0, 5), ...demoPeople].slice(0, 10));
-      setStatus(`${realPeople.length ? `${realPeople.length} ${realPeople.length === 1 ? "persona real activa" : "personas reales activas"} · ` : ""}Actualizado ahora.`);
+      lastPresenceCoordsRef.current = location;
+      await refreshNearbyAt(location);
       setView("radar");
     } catch (error: any) {
       setStatus(error?.message || "No pudimos actualizar tu presencia.");
@@ -599,20 +689,39 @@ export default function Home() {
       if (data.session) {
         await loadOwnProfile();
         await loadRequests(true);
+        await loadActiveConversation(true);
       }
     });
     const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setIsAuthenticated(Boolean(session));
-      if (session) await loadRequests(true);
+      if (session) { await loadRequests(true); await loadActiveConversation(true); }
     });
     return () => listener.subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
     if (!isAuthenticated || !supabase) return;
-    const timer = window.setInterval(() => loadRequests(true), 5000);
+    const timer = window.setInterval(async () => {
+      await loadRequests(true);
+      await loadActiveConversation(true);
+      if (view === "radar" && coords) await refreshNearbyAt(coords, true);
+    }, 5000);
     return () => window.clearInterval(timer);
-  }, [isAuthenticated]);
+  }, [isAuthenticated, view, coords?.lat, coords?.lng]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !profileComplete || !supabase || !navigator.geolocation) return;
+    const watchId = navigator.geolocation.watchPosition(async ({ coords: next }) => {
+      const nextCoords = { lat: next.latitude, lng: next.longitude };
+      const previous = lastPresenceCoordsRef.current || coords;
+      if (previous && distanceMeters(previous, nextCoords) < 25) return;
+      lastPresenceCoordsRef.current = nextCoords;
+      setCoords(nextCoords);
+      await supabase.rpc("update_my_presence_location", { user_lat: nextCoords.lat, user_lng: nextCoords.lng });
+      if (view === "radar") await refreshNearbyAt(nextCoords, true);
+    }, () => {}, { enableHighAccuracy: true, maximumAge: 20000, timeout: 10000 });
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [isAuthenticated, profileComplete, view]);
 
   return (
     <main className="page-shell">
@@ -674,9 +783,16 @@ export default function Home() {
         {view === "radar" && (
           <div className="content-pad radar-screen">
             <div className="screen-heading">
-              <div><span className="subtle">Personas cerca de ti</span><h2>{nearbyCount} disponibles</h2></div>
+              <div><span className="subtle">Personas cerca de ti</span><h2>{nearbyCount} personas cerca</h2><small className="nearby-summary">{availableNearbyCount} disponibles{nearbyCount - availableNearbyCount > 0 ? ` · ${nearbyCount - availableNearbyCount} ocupadas` : ""}</small></div>
             </div>
             <div className="status-line">{status}</div>
+            {activeConversation && (
+              <div className="conversation-banner">
+                <div className="conversation-icon"><MessageCircle size={19}/></div>
+                <div><span>Estás conversando con</span><strong>{activeConversation.name}</strong><small>{activeConversation.howToFindMe ? `Cómo encontrarle: ${activeConversation.howToFindMe}` : "Conversación activa"}</small></div>
+                <button type="button" onClick={endActiveConversation} disabled={conversationEnding}>{conversationEnding ? "Finalizando…" : "Plática concluida"}</button>
+              </div>
+            )}
             {pendingIncomingCount > 0 && (
               <button className="incoming-alert" onClick={async () => { await loadRequests(); setView("requests"); }}>
                 <Bell size={18}/><div><strong>{pendingIncomingCount === 1 ? "Alguien quiere saludarte" : `${pendingIncomingCount} personas quieren saludarte`}</strong><span>Toca para revisar la solicitud.</span></div><span className="incoming-alert-arrow">›</span>
@@ -685,16 +801,16 @@ export default function Home() {
             <div className="people-cloud" aria-label="Personas disponibles cerca. La posición de las burbujas es ilustrativa.">
               <div className="cloud-note">Las posiciones son ilustrativas</div>
               {people.slice(0,10).map((p, i) => (
-                <button key={p.id} className="person-bubble" style={{ left: bubblePositions[i].left, top: bubblePositions[i].top, transform: `translate(-50%,-50%) scale(${bubblePositions[i].scale})` }} onClick={() => openPerson(p)}>
+                <button key={p.id} className={`person-bubble ${p.socialStatus === "busy" ? "busy" : ""}`} style={{ left: bubblePositions[i].left, top: bubblePositions[i].top, transform: `translate(-50%,-50%) scale(${bubblePositions[i].scale})` }} onClick={() => openPerson(p)}>
                   <span className="intent-tag">{p.intent}</span>
                   {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name}/> : <span className="avatar-fallback locked-avatar"><UserRound size={28}/></span>}
-                  <strong>{p.name}</strong><small>Disponible</small>
+                  <strong>{p.name}</strong><small>{p.socialStatus === "busy" ? "Ocupado" : "Disponible"}</small>
                 </button>
               ))}
-              <button className="my-bubble" onClick={() => openMyProfile()} aria-label="Abrir mi perfil">
+              <button className={`my-bubble ${activeConversation ? "busy" : ""}`} onClick={() => openMyProfile()} aria-label="Abrir mi perfil">
                 {avatarUrl ? <img src={avatarUrl} alt="Tu perfil"/> : <span className="my-avatar-empty"><UserRound size={30}/></span>}
                 <strong>Tú</strong>
-                <small>{profileComplete ? mood : "Completar perfil"}</small>
+                <small>{profileComplete ? (activeConversation ? "Ocupado" : mood) : "Completar perfil"}</small>
               </button>
             </div>
             <div className="radar-update-zone">
@@ -715,10 +831,10 @@ export default function Home() {
               <span>{selected.intent}</span>
             </div>
             <h2>{selected.name}</h2><p>{selected.bio}</p>
-            <div className="availability-pill"><span className="availability-dot"/> Disponible cerca de ti</div>
+            <div className={`availability-pill ${selected.socialStatus === "busy" ? "busy" : ""}`}><span className="availability-dot"/> {selected.socialStatus === "busy" ? "Ocupado en una conversación" : "Disponible cerca de ti"}</div>
             <div className="section-card"><span className="section-label">Intereses</span><div className="chips">{selected.interests.map(x => <span key={x}>{x}</span>)}</div></div>
             <div className="permission-copy"><Hand size={22}/><div><strong>No mostramos dónde está exactamente.</strong><span>“Cómo encontrarme” permanece oculto hasta que exista consentimiento. Quien recibe una solicitud sí puede identificar primero a quien la envió.</span></div></div>
-            <button className="primary" onClick={() => requestHello(selected)}><Hand size={19}/> Quiero saludarle</button>
+            {selected.socialStatus === "busy" ? <button className="primary busy-disabled" disabled><MessageCircle size={19}/> Ocupado</button> : activeConversation ? <button className="primary busy-disabled" disabled><MessageCircle size={19}/> Estás ocupado</button> : <button className="primary" onClick={() => requestHello(selected)}><Hand size={19}/> Quiero saludarle</button>}
           </div>
         )}
 
@@ -775,14 +891,15 @@ export default function Home() {
                     {request.howToFindMe && (
                       <div className="how-to-find-card"><MapPin size={19}/><div><span>Cómo encontrarme</span><strong>{request.howToFindMe}</strong></div></div>
                     )}
-                    {request.direction === "incoming" && request.status === "pending" && (
+                    {request.direction === "incoming" && request.status === "pending" && activeConversation && <div className="waiting-copy">Termina tu conversación actual antes de aceptar otra solicitud.</div>}
+                    {request.direction === "incoming" && request.status === "pending" && !activeConversation && (
                       <div className="request-actions">
                         <button className="decline-request" disabled={requestActionId === request.id} onClick={() => respondToRequest(request, "declined")}>Ahora no</button>
                         <button className="accept-request" disabled={requestActionId === request.id} onClick={() => respondToRequest(request, "accepted")}><Check size={18}/>{requestActionId === request.id ? "Procesando…" : "Puede acercarse"}</button>
                       </div>
                     )}
                     {request.direction === "outgoing" && request.status === "pending" && <div className="waiting-copy">Esperando respuesta. Su ubicación sigue oculta.</div>}
-                    {request.direction === "outgoing" && request.status === "accepted" && request.howToFindMe && <div className="accepted-copy"><Check size={16}/> Ya puedes acercarte a saludarle.</div>}
+                    {request.direction === "outgoing" && request.status === "accepted" && request.howToFindMe && <div className="accepted-copy"><Check size={16}/> Ya puedes acercarte a saludarle. Ambos aparecen como ocupados hasta finalizar la plática.</div>}
                   </article>
                 ))}
               </div>
