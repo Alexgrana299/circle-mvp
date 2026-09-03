@@ -1,8 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
-import { ArrowLeft, Eye, EyeOff, Hand, LogOut, Mail, MapPin, Radio, ShieldCheck, Sparkles } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent, PointerEvent as ReactPointerEvent } from "react";
+import {
+  ArrowLeft,
+  Camera,
+  Check,
+  Eye,
+  EyeOff,
+  Hand,
+  LogOut,
+  Mail,
+  MapPin,
+  Radio,
+  ShieldCheck,
+  Sparkles,
+  UserRound,
+  X,
+} from "lucide-react";
 import { hasSupabase, supabase } from "@/lib/supabase";
 
 type Person = {
@@ -13,40 +28,68 @@ type Person = {
   intent: string;
   interests: string[];
   avatar: string;
+  simulated?: boolean;
 };
 
-type View = "landing" | "auth" | "radar" | "profile" | "onboarding" | "success";
+type View = "landing" | "auth" | "radar" | "profile" | "myProfile" | "success";
 type AuthMode = "login" | "signup";
 
+type CropOffset = { x: number; y: number };
+
+const moodOptions = ["Networking", "Entrenar", "Charlar", "Hacer amigos"];
+const interestOptions = ["Viajes", "Libros", "Café", "Startups", "Running", "Tecnología", "Música", "Arte", "Negocios"];
+
 const demoPeople: Person[] = [
-  { id: "sofia", name: "Sofía", initials: "S", bio: "Arquitectura. Me gusta leer, viajar y descubrir cafés.", intent: "Platicar", interests: ["Viajes", "Libros", "Café"], avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=240&q=80" },
-  { id: "diego", name: "Diego", initials: "D", bio: "Emprendimiento, tecnología y running.", intent: "Networking", interests: ["Startups", "IA", "Running"], avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=240&q=80" },
-  { id: "andrea", name: "Andrea", initials: "A", bio: "Diseño, música y conocer gente nueva.", intent: "Platicar", interests: ["Diseño", "Música", "Viajes"], avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=240&q=80" },
-  { id: "carlos", name: "Carlos", initials: "C", bio: "Negocios, fitness y café.", intent: "Networking", interests: ["Negocios", "Gym", "Café"], avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=240&q=80" },
-  { id: "fer", name: "Fernanda", initials: "F", bio: "Libros, cine y nuevas experiencias.", intent: "Conocer gente", interests: ["Libros", "Cine", "Arte"], avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=240&q=80" }
+  { id: "demo-sofia", name: "Sofía", initials: "S", bio: "Arquitectura. Me gusta leer, viajar y descubrir cafés.", intent: "Charlar", interests: ["Viajes", "Libros", "Café"], avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=240&q=80", simulated: true },
+  { id: "demo-diego", name: "Diego", initials: "D", bio: "Emprendimiento, tecnología y running.", intent: "Networking", interests: ["Startups", "Tecnología", "Running"], avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=240&q=80", simulated: true },
+  { id: "demo-andrea", name: "Andrea", initials: "A", bio: "Diseño, música y conocer gente nueva.", intent: "Hacer amigos", interests: ["Arte", "Música", "Viajes"], avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=240&q=80", simulated: true },
+  { id: "demo-carlos", name: "Carlos", initials: "C", bio: "Negocios, fitness y café.", intent: "Entrenar", interests: ["Negocios", "Running", "Café"], avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=240&q=80", simulated: true },
+  { id: "demo-fer", name: "Fernanda", initials: "F", bio: "Libros, cine y nuevas experiencias.", intent: "Charlar", interests: ["Libros", "Arte", "Viajes"], avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=240&q=80", simulated: true },
 ];
 
 const bubblePositions = [
-  { left: "24%", top: "18%", scale: 1.02 },
-  { left: "73%", top: "16%", scale: .94 },
-  { left: "50%", top: "47%", scale: 1.08 },
-  { left: "20%", top: "72%", scale: .93 },
-  { left: "77%", top: "72%", scale: 1.0 }
+  { left: "18%", top: "20%", scale: 1.00 },
+  { left: "78%", top: "18%", scale: .94 },
+  { left: "15%", top: "54%", scale: .92 },
+  { left: "82%", top: "53%", scale: 1.00 },
+  { left: "25%", top: "84%", scale: .94 },
+  { left: "74%", top: "83%", scale: .96 },
+  { left: "48%", top: "14%", scale: .88 },
+  { left: "48%", top: "88%", scale: .90 },
+  { left: "9%", top: "78%", scale: .84 },
+  { left: "91%", top: "77%", scale: .84 },
 ];
+
+function isProfileComplete(profile: { name: string; bio: string; avatar: string; interests: string[]; mood: string }) {
+  return Boolean(
+    profile.name.trim() &&
+    profile.bio.trim() &&
+    profile.avatar &&
+    profile.interests.length > 0 &&
+    profile.mood
+  );
+}
 
 export default function Home() {
   const [view, setView] = useState<View>("landing");
   const [people, setPeople] = useState<Person[]>(demoPeople);
   const [selected, setSelected] = useState<Person | null>(null);
-  const [isDemo, setIsDemo] = useState(true);
-  const [status, setStatus] = useState("Toca buscar para descubrir cómo funciona Circle.");
+  const [status, setStatus] = useState("Toca buscar para descubrir quién está disponible.");
   const [locating, setLocating] = useState(false);
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+
   const [name, setName] = useState("");
   const [bio, setBio] = useState("");
   const [specificLocation, setSpecificLocation] = useState("");
   const [interests, setInterests] = useState<string[]>([]);
+  const [mood, setMood] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState("");
+  const [avatarBlob, setAvatarBlob] = useState<Blob | null>(null);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileError, setProfileError] = useState("");
+  const [profilePrompt, setProfilePrompt] = useState("");
   const [pendingPerson, setPendingPerson] = useState<Person | null>(null);
-  const [coords, setCoords] = useState<{lat:number; lng:number} | null>(null);
+
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -57,9 +100,38 @@ export default function Home() {
   const [authMessage, setAuthMessage] = useState("");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
+  const [cropSource, setCropSource] = useState("");
+  const [cropZoom, setCropZoom] = useState(1);
+  const [cropOffset, setCropOffset] = useState<CropOffset>({ x: 0, y: 0 });
+  const [cropImageSize, setCropImageSize] = useState({ width: 0, height: 0 });
+  const dragRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
+  const cropImageRef = useRef<HTMLImageElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const radius = Number(process.env.NEXT_PUBLIC_NEARBY_RADIUS_METERS || 75);
-  const interestOptions = ["Viajes", "Libros", "Café", "Startups", "Running", "Tecnología", "Música", "Arte", "Negocios"];
+  const profileComplete = useMemo(() => isProfileComplete({ name, bio, avatar: avatarUrl, interests, mood }), [name, bio, avatarUrl, interests, mood]);
   const nearbyCount = useMemo(() => people.length, [people]);
+
+  async function loadOwnProfile() {
+    if (!supabase) return;
+    const { data: sessionData } = await supabase.auth.getSession();
+    const user = sessionData.session?.user;
+    if (!user) return;
+
+    const [{ data: profile }, { data: presence }] = await Promise.all([
+      supabase.from("profiles").select("display_name,bio,avatar_url,interests,intent").eq("id", user.id).maybeSingle(),
+      supabase.from("presence").select("specific_location").eq("user_id", user.id).maybeSingle(),
+    ]);
+
+    if (profile) {
+      setName(profile.display_name || "");
+      setBio(profile.bio || "");
+      setAvatarUrl(profile.avatar_url || "");
+      setInterests(profile.interests || []);
+      setMood(profile.intent || "");
+    }
+    if (presence) setSpecificLocation(presence.specific_location || "");
+  }
 
   async function enterCircle() {
     if (!supabase) {
@@ -70,6 +142,7 @@ export default function Home() {
     const { data } = await supabase.auth.getSession();
     if (data.session) {
       setIsAuthenticated(true);
+      await loadOwnProfile();
       await searchNearby();
       return;
     }
@@ -82,43 +155,26 @@ export default function Home() {
     setAuthMessage("");
 
     const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail || !password) {
-      setAuthError("Escribe tu correo y contraseña.");
-      return;
-    }
-    if (password.length < 6) {
-      setAuthError("La contraseña debe tener al menos 6 caracteres.");
-      return;
-    }
-    if (authMode === "signup" && password !== confirmPassword) {
-      setAuthError("Las contraseñas no coinciden.");
-      return;
-    }
-    if (!supabase) {
-      setAuthError("Supabase no está configurado. Revisa las variables de entorno.");
-      return;
-    }
+    if (!normalizedEmail || !password) return setAuthError("Escribe tu correo y contraseña.");
+    if (password.length < 6) return setAuthError("La contraseña debe tener al menos 6 caracteres.");
+    if (authMode === "signup" && password !== confirmPassword) return setAuthError("Las contraseñas no coinciden.");
+    if (!supabase) return setAuthError("Supabase no está configurado. Revisa las variables de entorno.");
 
     setAuthLoading(true);
     try {
       if (authMode === "login") {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: normalizedEmail,
-          password,
-        });
+        const { data, error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
         if (error) throw error;
         if (!data.session) throw new Error("No se pudo iniciar la sesión.");
         setIsAuthenticated(true);
+        await loadOwnProfile();
         await searchNearby();
       } else {
-        const { data, error } = await supabase.auth.signUp({
-          email: normalizedEmail,
-          password,
-        });
+        const { data, error } = await supabase.auth.signUp({ email: normalizedEmail, password });
         if (error) throw error;
-
         if (data.session) {
           setIsAuthenticated(true);
+          await loadOwnProfile();
           await searchNearby();
         } else {
           setAuthMessage("Cuenta creada. Revisa tu correo para confirmar tu cuenta y después inicia sesión.");
@@ -129,11 +185,7 @@ export default function Home() {
       }
     } catch (error: any) {
       const message = error?.message || "No pudimos completar la solicitud.";
-      setAuthError(
-        message.toLowerCase().includes("invalid login credentials")
-          ? "Correo o contraseña incorrectos."
-          : message
-      );
+      setAuthError(message.toLowerCase().includes("invalid login credentials") ? "Correo o contraseña incorrectos." : message);
     } finally {
       setAuthLoading(false);
     }
@@ -143,8 +195,8 @@ export default function Home() {
     if (supabase) await supabase.auth.signOut();
     setIsAuthenticated(false);
     setPeople(demoPeople);
-    setIsDemo(true);
     setSelected(null);
+    setName(""); setBio(""); setSpecificLocation(""); setInterests([]); setMood(""); setAvatarUrl(""); setAvatarBlob(null);
     setView("landing");
   }
 
@@ -153,16 +205,22 @@ export default function Home() {
     setStatus("Buscando personas cerca de ti…");
 
     if (!navigator.geolocation) {
-      activateDemo("Tu navegador no ofrece ubicación. Te mostramos una demo interactiva.");
+      setPeople(demoPeople);
+      setStatus("Mostrando personas disponibles de ejemplo.");
+      setLocating(false);
+      setView("radar");
       return;
     }
 
-    navigator.geolocation.getCurrentPosition(async ({ coords }) => {
-      const location = { lat: coords.latitude, lng: coords.longitude };
+    navigator.geolocation.getCurrentPosition(async ({ coords: browserCoords }) => {
+      const location = { lat: browserCoords.latitude, lng: browserCoords.longitude };
       setCoords(location);
 
       if (!supabase) {
-        activateDemo("Esta es una demo interactiva. Al conectar Supabase aparecerán personas reales.");
+        setPeople(demoPeople);
+        setStatus("Personas disponibles cerca de ti.");
+        setLocating(false);
+        setView("radar");
         return;
       }
 
@@ -172,42 +230,46 @@ export default function Home() {
         radius_meters: radius,
       });
 
-      if (error || !data?.length) {
-        activateDemo("Todavía no hay personas disponibles aquí. Así se verá Circle cuando alguien aparezca.");
-        return;
-      }
-
-      const realPeople: Person[] = data.map((p: any) => ({
+      const realPeople: Person[] = !error && data?.length ? data.map((p: any) => ({
         id: p.id,
         name: p.display_name || "Alguien cerca",
-        initials: (p.display_name || "C").slice(0, 1),
+        initials: (p.display_name || "C").slice(0, 1).toUpperCase(),
         bio: p.bio || "Disponible para socializar.",
-        intent: p.intent || "Platicar",
+        intent: p.intent || "Charlar",
         interests: p.interests || [],
         avatar: p.avatar_url || "",
-      }));
+        simulated: false,
+      })) : [];
 
-      setPeople(realPeople);
-      setIsDemo(false);
-      setStatus(`${realPeople.length} ${realPeople.length === 1 ? "persona disponible" : "personas disponibles"} en tu zona.`);
+      setPeople([...realPeople.slice(0, 5), ...demoPeople].slice(0, 10));
+      setStatus(`${realPeople.length ? `${realPeople.length} ${realPeople.length === 1 ? "persona real activa" : "personas reales activas"} · ` : ""}Circle mantiene personas de ejemplo visibles para las demos.`);
       setLocating(false);
       setView("radar");
     }, () => {
-      activateDemo("No pudimos acceder a tu ubicación. Puedes probar Circle en modo demo.");
+      setPeople(demoPeople);
+      setStatus("No pudimos acceder a tu ubicación. Mostramos personas de ejemplo.");
+      setLocating(false);
+      setView("radar");
     }, { enableHighAccuracy: true, timeout: 7000, maximumAge: 30000 });
-  }
-
-  function activateDemo(message: string) {
-    setPeople(demoPeople);
-    setIsDemo(true);
-    setStatus(message);
-    setLocating(false);
-    setView("radar");
   }
 
   function openPerson(person: Person) {
     setSelected(person);
     setView("profile");
+  }
+
+  function openMyProfile(prompt = "") {
+    setProfilePrompt(prompt);
+    setProfileError("");
+    setView("myProfile");
+  }
+
+  async function sendRequest(person: Person) {
+    if (!person.simulated && supabase) {
+      const { error } = await supabase.from("social_requests").insert({ receiver_id: person.id });
+      if (error) throw error;
+    }
+    setView("success");
   }
 
   async function requestHello(person: Person) {
@@ -217,48 +279,172 @@ export default function Home() {
       setView("auth");
       return;
     }
-    if (!isDemo && supabase) {
-      await supabase.from("social_requests").insert({ receiver_id: person.id });
+    if (!profileComplete) {
+      openMyProfile("Completa tu perfil para que la otra persona pueda decidir si quiere que te acerques.");
+      return;
     }
-    setView("success");
+    try {
+      await sendRequest(person);
+    } catch (error: any) {
+      setProfileError(error?.message || "No se pudo enviar la solicitud.");
+    }
   }
 
-  async function createProfile() {
-    if (!name.trim()) return;
-    if (supabase) {
-      const session = (await supabase.auth.getSession()).data.session;
-      if (session) {
-        await supabase.from("profiles").upsert({
-          id: session.user.id,
-          display_name: name.trim(),
-          bio: bio.trim(),
-          interests,
-          intent: "Platicar",
+  function choosePhoto() {
+    fileInputRef.current?.click();
+  }
+
+  function onPhotoSelected(file?: File) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) return setProfileError("Selecciona una imagen válida.");
+    if (file.size > 12 * 1024 * 1024) return setProfileError("La imagen es demasiado grande. Usa una menor a 12 MB.");
+    if (cropSource.startsWith("blob:")) URL.revokeObjectURL(cropSource);
+    const objectUrl = URL.createObjectURL(file);
+    setCropSource(objectUrl);
+    setCropZoom(1);
+    setCropOffset({ x: 0, y: 0 });
+    setProfileError("");
+  }
+
+  function cropGeometry(zoom = cropZoom) {
+    const size = 280;
+    if (!cropImageSize.width || !cropImageSize.height) return { scale: 1, renderedWidth: size, renderedHeight: size, maxX: 0, maxY: 0 };
+    const baseScale = Math.max(size / cropImageSize.width, size / cropImageSize.height);
+    const scale = baseScale * zoom;
+    const renderedWidth = cropImageSize.width * scale;
+    const renderedHeight = cropImageSize.height * scale;
+    return {
+      scale,
+      renderedWidth,
+      renderedHeight,
+      maxX: Math.max(0, (renderedWidth - size) / 2),
+      maxY: Math.max(0, (renderedHeight - size) / 2),
+    };
+  }
+
+  function clampOffset(offset: CropOffset, zoom = cropZoom): CropOffset {
+    const { maxX, maxY } = cropGeometry(zoom);
+    return {
+      x: Math.max(-maxX, Math.min(maxX, offset.x)),
+      y: Math.max(-maxY, Math.min(maxY, offset.y)),
+    };
+  }
+
+  function handleCropPointerDown(e: ReactPointerEvent<HTMLDivElement>) {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, originX: cropOffset.x, originY: cropOffset.y };
+  }
+
+  function handleCropPointerMove(e: ReactPointerEvent<HTMLDivElement>) {
+    if (!dragRef.current || dragRef.current.pointerId !== e.pointerId) return;
+    const next = {
+      x: dragRef.current.originX + (e.clientX - dragRef.current.startX),
+      y: dragRef.current.originY + (e.clientY - dragRef.current.startY),
+    };
+    setCropOffset(clampOffset(next));
+  }
+
+  function handleCropPointerUp(e: ReactPointerEvent<HTMLDivElement>) {
+    if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null;
+  }
+
+  async function acceptCrop() {
+    const image = cropImageRef.current;
+    if (!image || !cropImageSize.width || !cropImageSize.height) return;
+    const size = 280;
+    const { scale, renderedWidth, renderedHeight } = cropGeometry();
+    const imageLeft = (size - renderedWidth) / 2 + cropOffset.x;
+    const imageTop = (size - renderedHeight) / 2 + cropOffset.y;
+    const sx = -imageLeft / scale;
+    const sy = -imageTop / scale;
+    const sourceSize = size / scale;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = 640;
+    canvas.height = 640;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(image, sx, sy, sourceSize, sourceSize, 0, 0, 640, 640);
+    const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, "image/jpeg", 0.9));
+    if (!blob) return;
+    setAvatarBlob(blob);
+    setAvatarUrl(canvas.toDataURL("image/jpeg", 0.9));
+    if (cropSource.startsWith("blob:")) URL.revokeObjectURL(cropSource);
+    setCropSource("");
+  }
+
+  async function saveProfile() {
+    setProfileError("");
+    if (!name.trim() || !bio.trim() || !avatarUrl || !interests.length || !mood) {
+      setProfileError("Completa foto, nombre, descripción, al menos un interés y mood.");
+      return;
+    }
+    if (!supabase) return setProfileError("Supabase no está conectado.");
+
+    setProfileSaving(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const user = sessionData.session?.user;
+      if (!user) throw new Error("Tu sesión expiró. Inicia sesión nuevamente.");
+
+      let finalAvatarUrl = avatarUrl;
+      if (avatarBlob) {
+        const path = `${user.id}/avatar.jpg`;
+        const { error: uploadError } = await supabase.storage.from("avatars").upload(path, avatarBlob, {
+          contentType: "image/jpeg",
+          cacheControl: "3600",
+          upsert: true,
         });
-        if (coords) {
-          await supabase.from("presence").upsert({
-            user_id: session.user.id,
-            location: `POINT(${coords.lng} ${coords.lat})`,
-            specific_location: specificLocation.trim() || null,
-            is_available: true,
-            last_seen: new Date().toISOString(),
-          });
-        }
+        if (uploadError) throw uploadError;
+        finalAvatarUrl = `${supabase.storage.from("avatars").getPublicUrl(path).data.publicUrl}?v=${Date.now()}`;
       }
-    }
-    setView("success");
-  }
 
-  useEffect(() => {
-    if (view === "landing") setSelected(null);
-  }, [view]);
+      const { error: profileUpsertError } = await supabase.from("profiles").upsert({
+        id: user.id,
+        display_name: name.trim(),
+        bio: bio.trim(),
+        avatar_url: finalAvatarUrl,
+        interests,
+        intent: mood,
+      });
+      if (profileUpsertError) throw profileUpsertError;
+
+      if (coords) {
+        const { error: presenceError } = await supabase.from("presence").upsert({
+          user_id: user.id,
+          location: `POINT(${coords.lng} ${coords.lat})`,
+          specific_location: specificLocation.trim() || null,
+          is_available: true,
+          last_seen: new Date().toISOString(),
+        });
+        if (presenceError) throw presenceError;
+      }
+
+      setAvatarUrl(finalAvatarUrl);
+      setAvatarBlob(null);
+      setProfilePrompt("");
+
+      const personToRequest = pendingPerson;
+      if (personToRequest) {
+        await sendRequest(personToRequest);
+      } else {
+        await searchNearby();
+      }
+    } catch (error: any) {
+      const message = error?.message || "No pudimos guardar tu perfil.";
+      setProfileError(message.includes("Bucket not found") ? "Falta crear el bucket de fotos 'avatars' en Supabase. Ejecuta profile_upgrade.sql." : message);
+    } finally {
+      setProfileSaving(false);
+    }
+  }
 
   useEffect(() => {
     if (!supabase) return;
-    supabase.auth.getSession().then(({ data }) => setIsAuthenticated(Boolean(data.session)));
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setIsAuthenticated(Boolean(session));
+    supabase.auth.getSession().then(async ({ data }) => {
+      setIsAuthenticated(Boolean(data.session));
+      if (data.session) await loadOwnProfile();
     });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => setIsAuthenticated(Boolean(session)));
     return () => listener.subscription.unsubscribe();
   }, []);
 
@@ -281,17 +467,13 @@ export default function Home() {
             <div className="eyebrow"><Sparkles size={16}/> Conoce a quien ya está aquí</div>
             <h1>¿Quién está abierto a <span>hablar contigo</span> cerca?</h1>
             <p className="lead">Circle elimina la parte incómoda de iniciar una conversación: primero sabes quién sí quiere que te acerques.</p>
-
             <div className="mini-cloud" aria-label="Vista previa de personas cercanas">
-              {demoPeople.slice(0,4).map((p, i) => <img key={p.id} src={p.avatar} alt="Perfil demo" className={`mini-avatar a${i+1}`} />)}
+              {demoPeople.slice(0,4).map((p, i) => <img key={p.id} src={p.avatar} alt="Perfil" className={`mini-avatar a${i+1}`} />)}
               <div className="you-dot">Tú</div>
             </div>
-
-            <button className="primary hero-button" onClick={enterCircle}>
-              <Radio size={20}/>{isAuthenticated ? "Entrar a Circle" : "Buscar gente para socializar"}
-            </button>
+            <button className="primary hero-button" onClick={enterCircle}><Radio size={20}/>{isAuthenticated ? "Entrar a Circle" : "Buscar gente para socializar"}</button>
             <p className="microcopy"><MapPin size={14}/> Usamos tu ubicación para saber quién está en tu zona, nunca para mostrar tu posición exacta.</p>
-            {!hasSupabase && <div className="dev-note">Modo demo activo · conecta Supabase para datos reales.</div>}
+            {!hasSupabase && <div className="dev-note">Conecta Supabase para usar cuentas y perfiles reales.</div>}
           </div>
         )}
 
@@ -301,33 +483,18 @@ export default function Home() {
             <span className="subtle">Tu cuenta Circle</span>
             <h2>{authMode === "login" ? "Bienvenido de vuelta" : "Crea tu cuenta"}</h2>
             <p>{authMode === "login" ? "Inicia sesión para ver quién está disponible cerca de ti." : "Solo necesitas correo y contraseña. Tu perfil social lo completarás después."}</p>
-
             <div className="auth-tabs" role="tablist" aria-label="Acceso a Circle">
               <button type="button" className={authMode === "login" ? "active" : ""} onClick={() => { setAuthMode("login"); setAuthError(""); setAuthMessage(""); }}>Iniciar sesión</button>
               <button type="button" className={authMode === "signup" ? "active" : ""} onClick={() => { setAuthMode("signup"); setAuthError(""); setAuthMessage(""); }}>Crear cuenta</button>
             </div>
-
             <form className="auth-form" onSubmit={handleAuthSubmit}>
-              <label>Correo electrónico
-                <div className="input-with-icon"><Mail size={18}/><input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="tu@correo.com" /></div>
-              </label>
-              <label>Contraseña
-                <div className="input-with-icon password-field"><input type={showPassword ? "text" : "password"} autoComplete={authMode === "login" ? "current-password" : "new-password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" /><button type="button" onClick={() => setShowPassword(v => !v)} aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}>{showPassword ? <EyeOff size={18}/> : <Eye size={18}/>}</button></div>
-              </label>
-              {authMode === "signup" && (
-                <label>Confirmar contraseña
-                  <div className="input-with-icon"><input type={showPassword ? "text" : "password"} autoComplete="new-password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Repite tu contraseña" /></div>
-                </label>
-              )}
-
+              <label>Correo electrónico<div className="input-with-icon"><Mail size={18}/><input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="tu@correo.com" /></div></label>
+              <label>Contraseña<div className="input-with-icon password-field"><input type={showPassword ? "text" : "password"} autoComplete={authMode === "login" ? "current-password" : "new-password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" /><button type="button" onClick={() => setShowPassword(v => !v)} aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}>{showPassword ? <EyeOff size={18}/> : <Eye size={18}/>}</button></div></label>
+              {authMode === "signup" && <label>Confirmar contraseña<div className="input-with-icon"><input type={showPassword ? "text" : "password"} autoComplete="new-password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Repite tu contraseña" /></div></label>}
               {authError && <div className="auth-feedback error">{authError}</div>}
               {authMessage && <div className="auth-feedback success">{authMessage}</div>}
-
-              <button className="primary" type="submit" disabled={authLoading}>
-                {authLoading ? "Procesando…" : authMode === "login" ? "Iniciar sesión" : "Crear cuenta"}
-              </button>
+              <button className="primary" type="submit" disabled={authLoading}>{authLoading ? "Procesando…" : authMode === "login" ? "Iniciar sesión" : "Crear cuenta"}</button>
             </form>
-
             <p className="microcopy center"><ShieldCheck size={14}/> Tu correo se usa para tu cuenta; no se muestra públicamente en Circle.</p>
           </div>
         )}
@@ -336,24 +503,23 @@ export default function Home() {
           <div className="content-pad radar-screen">
             <div className="screen-heading">
               <div><span className="subtle">Personas cerca de ti</span><h2>{nearbyCount} disponibles</h2></div>
-              <button className="icon-button" onClick={searchNearby} aria-label="Actualizar"><Radio size={20}/></button>
+              <button className="icon-button" onClick={searchNearby} aria-label="Actualizar" disabled={locating}><Radio size={20}/></button>
             </div>
             <div className="status-line">{status}</div>
             <div className="people-cloud" aria-label="Personas disponibles cerca. La posición de las burbujas es ilustrativa.">
               <div className="cloud-note">Las posiciones son ilustrativas</div>
-              {people.slice(0,5).map((p, i) => (
-                <button
-                  key={p.id}
-                  className="person-bubble"
-                  style={{ left: bubblePositions[i].left, top: bubblePositions[i].top, transform: `translate(-50%,-50%) scale(${bubblePositions[i].scale})` }}
-                  onClick={() => openPerson(p)}
-                >
+              {people.slice(0,10).map((p, i) => (
+                <button key={p.id} className="person-bubble" style={{ left: bubblePositions[i].left, top: bubblePositions[i].top, transform: `translate(-50%,-50%) scale(${bubblePositions[i].scale})` }} onClick={() => openPerson(p)}>
                   <span className="intent-tag">{p.intent}</span>
-                  {p.avatar ? <img src={p.avatar} alt={p.name}/> : <span className="avatar-fallback">{p.initials}</span>}
-                  <strong>{p.name}</strong>
-                  <small>Disponible</small>
+                  {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name}/> : <span className="avatar-fallback locked-avatar"><UserRound size={28}/></span>}
+                  <strong>{p.name}</strong><small>Disponible</small>
                 </button>
               ))}
+              <button className="my-bubble" onClick={() => openMyProfile()} aria-label="Abrir mi perfil">
+                {avatarUrl ? <img src={avatarUrl} alt="Tu perfil"/> : <span className="my-avatar-empty"><UserRound size={30}/></span>}
+                <strong>Tú</strong>
+                <small>{profileComplete ? mood : "Completar perfil"}</small>
+              </button>
             </div>
           </div>
         )}
@@ -361,7 +527,10 @@ export default function Home() {
         {view === "profile" && selected && (
           <div className="content-pad profile-screen">
             <button className="back" onClick={() => setView("radar")}><ArrowLeft size={20}/> Personas cerca</button>
-            <div className="profile-avatar-wrap"><img src={selected.avatar} alt={selected.name}/><span>{selected.intent}</span></div>
+            <div className="profile-avatar-wrap">
+              {profileComplete && selected.avatar ? <img src={selected.avatar} alt={selected.name}/> : <div className="profile-photo-locked"><UserRound size={42}/><span>Completa tu perfil para ver fotos</span></div>}
+              <span>{selected.intent}</span>
+            </div>
             <h2>{selected.name}</h2><p>{selected.bio}</p>
             <div className="availability-pill"><span className="availability-dot"/> Disponible cerca de ti</div>
             <div className="section-card"><span className="section-label">Intereses</span><div className="chips">{selected.interests.map(x => <span key={x}>{x}</span>)}</div></div>
@@ -370,19 +539,34 @@ export default function Home() {
           </div>
         )}
 
-        {view === "onboarding" && (
-          <div className="content-pad onboarding-screen">
-            <button className="back" onClick={() => setView("profile")}><ArrowLeft size={20}/> Volver</button>
-            <span className="subtle">Un último paso</span><h2>Crea tu perfil</h2>
-            <p>La otra persona necesita saber quién quiere acercarse antes de decidir.</p>
-            <label>Nombre<input value={name} onChange={e=>setName(e.target.value)} placeholder="Tu nombre"/></label>
-            <label>Tu descripción<textarea value={bio} onChange={e=>setBio(e.target.value)} placeholder="Me gusta viajar, leer y conocer gente nueva."/></label>
-            <label>Especificar ubicación <span className="optional">(opcional)</span><input value={specificLocation} onChange={e=>setSpecificLocation(e.target.value)} placeholder="Ej. Piso 7, terraza, mesa junto a la ventana"/></label>
-            <p className="privacy-hint"><ShieldCheck size={14}/> Esta referencia solo se comparte cuando aceptas una interacción.</p>
-            <div className="field-label">Elige tus intereses</div>
-            <div className="chips selectable">{interestOptions.map(x => <button key={x} className={interests.includes(x)?"selected":""} onClick={() => setInterests(v => v.includes(x)?v.filter(i=>i!==x):v.length<5?[...v,x]:v)}>{x}</button>)}</div>
-            <button className="primary" onClick={createProfile} disabled={!name.trim()}>Crear perfil y continuar</button>
-            <p className="microcopy center">Puedes usar Circle sin publicar correo, teléfono ni redes sociales.</p>
+        {view === "myProfile" && (
+          <div className="content-pad onboarding-screen my-profile-screen">
+            <button className="back" onClick={() => { setProfilePrompt(""); setPendingPerson(null); setView("radar"); }}><ArrowLeft size={20}/> Personas cerca</button>
+            <span className="subtle">Mi perfil</span><h2>{profileComplete ? "Tu perfil Circle" : "Completa tu perfil"}</h2>
+            {profilePrompt ? <div className="profile-prompt"><ShieldCheck size={18}/><span>{profilePrompt}</span></div> : <p>Esta es la información que las personas cercanas usan para decidir si quieren conocerte.</p>}
+
+            <input ref={fileInputRef} className="hidden-file-input" type="file" accept="image/*" onChange={e => { onPhotoSelected(e.target.files?.[0]); e.currentTarget.value = ""; }} />
+            <button type="button" className={`avatar-picker ${avatarUrl ? "has-photo" : ""}`} onClick={choosePhoto}>
+              {avatarUrl ? <img src={avatarUrl} alt="Tu foto"/> : <><Camera size={28}/><strong>Agregar foto</strong><span>Desde tu galería</span></>}
+              {avatarUrl && <span className="avatar-edit-badge"><Camera size={16}/></span>}
+            </button>
+            <p className="avatar-help">Toca la foto para cambiarla. Podrás encuadrarla antes de guardar.</p>
+
+            <label>Nombre<input value={name} onChange={e => setName(e.target.value)} placeholder="Tu nombre"/></label>
+            <label>Tu descripción<textarea value={bio} onChange={e => setBio(e.target.value)} placeholder="Me gusta viajar, leer y conocer gente nueva."/></label>
+
+            <div className="field-label">Mood</div>
+            <div className="chips selectable mood-grid">{moodOptions.map(x => <button type="button" key={x} className={mood === x ? "selected" : ""} onClick={() => setMood(x)}>{x}</button>)}</div>
+
+            <div className="field-label">Intereses <span className="optional">(elige hasta 5)</span></div>
+            <div className="chips selectable">{interestOptions.map(x => <button type="button" key={x} className={interests.includes(x) ? "selected" : ""} onClick={() => setInterests(v => v.includes(x) ? v.filter(i => i !== x) : v.length < 5 ? [...v, x] : v)}>{x}</button>)}</div>
+
+            <label>Especificar ubicación <span className="optional">(opcional)</span><input value={specificLocation} onChange={e => setSpecificLocation(e.target.value)} placeholder="Ej. Piso 7, terraza, mesa junto a la ventana"/></label>
+            <p className="privacy-hint"><ShieldCheck size={14}/> Esta referencia no aparece en el panel de personas cercanas.</p>
+
+            {profileError && <div className="auth-feedback error">{profileError}</div>}
+            <button className="primary" onClick={saveProfile} disabled={profileSaving}>{profileSaving ? "Guardando…" : pendingPerson ? "Guardar y enviar solicitud" : "Guardar perfil"}</button>
+            <p className="microcopy center">Las fotos de otras personas se desbloquean cuando completas tu perfil.</p>
           </div>
         )}
 
@@ -390,13 +574,28 @@ export default function Home() {
           <div className="content-pad success-screen">
             <div className="success-icon">✓</div>
             <span className="subtle">Solicitud lista</span>
-            <h2>{isDemo ? "Así se sentiría el momento clave" : "Solicitud enviada"}</h2>
-            <p>{isDemo ? `${pendingPerson?.name || "La persona"} vería tu perfil y decidiría si puedes acercarte.` : `Le avisamos a ${pendingPerson?.name || "la persona"}. Si acepta, podrán compartir una referencia para encontrarse.`}</p>
+            <h2>{pendingPerson?.simulated ? "Solicitud simulada enviada" : "Solicitud enviada"}</h2>
+            <p>{pendingPerson?.simulated ? `${pendingPerson?.name || "La persona"} representa cómo funcionará la solicitud durante la demo.` : `Le avisamos a ${pendingPerson?.name || "la persona"}. Si acepta, podrán compartir una referencia para encontrarse.`}</p>
             <div className="section-card safety"><ShieldCheck size={22}/><div><strong>Consentimiento primero</strong><span>Ni la ubicación exacta ni una referencia específica se muestran antes de aceptar.</span></div></div>
-            <button className="primary" onClick={() => { setPendingPerson(null); setView("radar"); }}>Volver a personas cerca</button>
+            <button className="primary" onClick={async () => { setPendingPerson(null); await searchNearby(); }}>Volver a personas cerca</button>
           </div>
         )}
       </section>
+
+      {cropSource && (
+        <div className="crop-modal" role="dialog" aria-modal="true" aria-label="Encuadrar foto de perfil">
+          <div className="crop-sheet">
+            <div className="crop-header"><div><span className="subtle">Foto de perfil</span><h3>Encuadra tu foto</h3></div><button type="button" onClick={() => { if (cropSource.startsWith("blob:")) URL.revokeObjectURL(cropSource); setCropSource(""); }} aria-label="Cerrar"><X size={21}/></button></div>
+            <p>Mueve la imagen con el dedo y usa el control para acercar o alejar.</p>
+            <div className="crop-stage" onPointerDown={handleCropPointerDown} onPointerMove={handleCropPointerMove} onPointerUp={handleCropPointerUp} onPointerCancel={handleCropPointerUp}>
+              <img ref={cropImageRef} src={cropSource} alt="Foto por recortar" draggable={false} onLoad={e => { const img = e.currentTarget; setCropImageSize({ width: img.naturalWidth, height: img.naturalHeight }); setCropOffset({ x: 0, y: 0 }); }} style={cropImageSize.width ? (() => { const g = cropGeometry(); return { width: g.renderedWidth, height: g.renderedHeight, transform: `translate(calc(-50% + ${cropOffset.x}px), calc(-50% + ${cropOffset.y}px))` }; })() : undefined}/>
+              <div className="crop-mask" />
+            </div>
+            <label className="zoom-control">Zoom<input type="range" min="1" max="3" step="0.01" value={cropZoom} onChange={e => { const next = Number(e.target.value); setCropZoom(next); setCropOffset(current => clampOffset(current, next)); }}/></label>
+            <div className="crop-actions"><button type="button" className="secondary" onClick={choosePhoto}>Elegir otra</button><button type="button" className="primary" onClick={acceptCrop}><Check size={18}/> Usar foto</button></div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
