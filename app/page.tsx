@@ -78,10 +78,10 @@ const demoPeople: Person[] = [
   { id: "demo-fer", name: "Fernanda", initials: "F", bio: "Libros, cine y nuevas experiencias.", intent: "Charlar", interests: ["Libros", "Arte", "Viajes"], avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
 ];
 
-const CLOUD_RING_GAP = 165;
-const CLOUD_FIRST_RING = 180;
-const CLOUD_MIN_CHORD = 150;
-const CLOUD_EDGE_PADDING = 150;
+const CLOUD_RING_GAP = 150;
+const CLOUD_FIRST_RING = 165;
+const CLOUD_MIN_CHORD = 140;
+const CLOUD_EDGE_PADDING = 125;
 
 function seededJitter(seed: number) {
   const value = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
@@ -199,6 +199,7 @@ export default function Home() {
   const requestsRef = useRef<SocialRequest[]>([]);
   const notifiedAcceptedRequestIdsRef = useRef<Set<number>>(new Set());
   const peopleCanvasRef = useRef<HTMLDivElement | null>(null);
+  const [canvasZoom, setCanvasZoom] = useState(1);
 
   function connectionAckKey(requestId: number) { return `circle_connection_ack_${requestId}`; }
   function isConnectionAcknowledged(requestId: number) {
@@ -1079,16 +1080,55 @@ export default function Home() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [isAuthenticated, profileComplete, view, coords?.lat, coords?.lng]);
 
-  useEffect(() => {
-    if (view !== "radar") return;
+  function fitPeopleCanvas() {
     const el = peopleCanvasRef.current;
     if (!el) return;
-    const frame = window.requestAnimationFrame(() => {
-      el.scrollLeft = Math.max(0, (el.scrollWidth - el.clientWidth) / 2);
-      el.scrollTop = Math.max(0, (el.scrollHeight - el.clientHeight) / 2);
+    const padding = 22;
+    const fitX = Math.max(0.28, (el.clientWidth - padding) / cloudLayout.width);
+    const fitY = Math.max(0.28, (el.clientHeight - padding) / cloudLayout.height);
+    const nextZoom = Math.min(1, fitX, fitY);
+    setCanvasZoom(nextZoom);
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const current = peopleCanvasRef.current;
+        if (!current) return;
+        current.scrollLeft = Math.max(0, (current.scrollWidth - current.clientWidth) / 2);
+        current.scrollTop = Math.max(0, (current.scrollHeight - current.clientHeight) / 2);
+      });
     });
-    return () => window.cancelAnimationFrame(frame);
-  }, [view]);
+  }
+
+  function changeCanvasZoom(delta: number) {
+    const el = peopleCanvasRef.current;
+    if (!el) return;
+    const oldZoom = canvasZoom;
+    const nextZoom = Math.min(1.45, Math.max(0.28, Number((oldZoom + delta).toFixed(2))));
+    if (nextZoom === oldZoom) return;
+
+    const centerX = el.scrollLeft + el.clientWidth / 2;
+    const centerY = el.scrollTop + el.clientHeight / 2;
+    const ratio = nextZoom / oldZoom;
+    setCanvasZoom(nextZoom);
+
+    window.requestAnimationFrame(() => {
+      const current = peopleCanvasRef.current;
+      if (!current) return;
+      current.scrollLeft = Math.max(0, centerX * ratio - current.clientWidth / 2);
+      current.scrollTop = Math.max(0, centerY * ratio - current.clientHeight / 2);
+    });
+  }
+
+  useEffect(() => {
+    if (view !== "radar") return;
+    const fit = () => fitPeopleCanvas();
+    const frame = window.requestAnimationFrame(fit);
+    window.addEventListener("resize", fit);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", fit);
+    };
+  }, [view, cloudLayout.width, cloudLayout.height, people.length]);
 
   useEffect(() => {
     if (!locationIssue) return;
@@ -1178,22 +1218,31 @@ export default function Home() {
             )}
             <div className="people-cloud-frame" aria-label="Personas disponibles cerca. La posición de las burbujas es ilustrativa.">
               <div className="people-cloud-scroll" ref={peopleCanvasRef}>
-                <div className="people-cloud-canvas" style={{ width: `${cloudLayout.width}px`, height: `${cloudLayout.height}px` }}>
-                  {people.map((p, i) => (
-                    <button key={p.id} className={`person-bubble ${p.socialStatus === "busy" ? "busy" : ""}`} style={{ left: `${cloudLayout.people[i].x}px`, top: `${cloudLayout.people[i].y}px` }} onClick={() => openPerson(p)}>
-                      <span className="intent-tag">{p.intent}</span>
-                      {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name}/> : <span className="avatar-fallback locked-avatar"><UserRound size={28}/></span>}
-                      <strong>{p.name}</strong><small>{p.socialStatus === "busy" ? "Ocupado" : "Disponible"}</small>
-                    </button>
-                  ))}
-                  <button className={`my-bubble ${activeConversation ? "busy" : ""}`} style={{ left: `${cloudLayout.centerX}px`, top: `${cloudLayout.centerY}px` }} onClick={() => openMyProfile()} aria-label="Abrir mi perfil">
-                    {avatarUrl ? <img src={avatarUrl} alt="Tu perfil"/> : <span className="my-avatar-empty"><UserRound size={30}/></span>}
-                    <strong>Tú</strong>
-                    <small>{profileComplete ? (activeConversation ? "Ocupado" : mood) : "Completar perfil"}</small>
-                  </button>
+                <div className="people-cloud-world" style={{ width: `max(100%, ${Math.round(cloudLayout.width * canvasZoom)}px)`, height: `max(100%, ${Math.round(cloudLayout.height * canvasZoom)}px)` }}>
+                  <div className="people-cloud-scale-layer" style={{ width: `${cloudLayout.width * canvasZoom}px`, height: `${cloudLayout.height * canvasZoom}px` }}>
+                    <div className="people-cloud-canvas" style={{ width: `${cloudLayout.width}px`, height: `${cloudLayout.height}px`, transform: `scale(${canvasZoom})` }}>
+                      {people.map((p, i) => (
+                        <button key={p.id} className={`person-bubble ${p.socialStatus === "busy" ? "busy" : ""}`} style={{ left: `${cloudLayout.people[i].x}px`, top: `${cloudLayout.people[i].y}px` }} onClick={() => openPerson(p)}>
+                          <span className="intent-tag">{p.intent}</span>
+                          {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name}/> : <span className="avatar-fallback locked-avatar"><UserRound size={28}/></span>}
+                          <strong>{p.name}</strong><small>{p.socialStatus === "busy" ? "Ocupado" : "Disponible"}</small>
+                        </button>
+                      ))}
+                      <button className={`my-bubble ${activeConversation ? "busy" : ""}`} style={{ left: `${cloudLayout.centerX}px`, top: `${cloudLayout.centerY}px` }} onClick={() => openMyProfile()} aria-label="Abrir mi perfil">
+                        {avatarUrl ? <img src={avatarUrl} alt="Tu perfil"/> : <span className="my-avatar-empty"><UserRound size={30}/></span>}
+                        <strong>Tú</strong>
+                        <small>{profileComplete ? (activeConversation ? "Ocupado" : mood) : "Completar perfil"}</small>
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div className="cloud-note">Desliza para explorar · posiciones ilustrativas</div>
+              <div className="canvas-controls" aria-label="Controles del panorama">
+                <button type="button" onClick={() => changeCanvasZoom(-0.12)} aria-label="Alejar">−</button>
+                <button type="button" className="fit-control" onClick={fitPeopleCanvas}>Fit</button>
+                <button type="button" onClick={() => changeCanvasZoom(0.12)} aria-label="Acercar">+</button>
+              </div>
+              <div className="cloud-note">{Math.round(canvasZoom * 100)}% · desliza para explorar</div>
             </div>
             <div className="radar-update-zone">
               <button className="profile-update-button" type="button" onClick={updatePresenceAndNearby} disabled={profileUpdating || locating}>
