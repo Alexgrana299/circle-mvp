@@ -37,6 +37,8 @@ type Person = {
 
 type View = "landing" | "auth" | "radar" | "profile" | "myProfile" | "requests" | "success";
 type AuthMode = "login" | "signup";
+type LocationIssue = "permission-denied" | "unavailable" | "timeout" | "unsupported";
+type LocationAction = "search" | "update" | "save";
 
 type CropOffset = { x: number; y: number };
 type ActiveConversation = {
@@ -106,6 +108,9 @@ export default function Home() {
   const [status, setStatus] = useState("Toca buscar para descubrir quién está disponible.");
   const [locating, setLocating] = useState(false);
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [locationIssue, setLocationIssue] = useState<LocationIssue | null>(null);
+  const [locationAction, setLocationAction] = useState<LocationAction>("search");
+  const [locationRetrying, setLocationRetrying] = useState(false);
 
   const [name, setName] = useState("");
   const [bio, setBio] = useState("");
@@ -281,26 +286,78 @@ export default function Home() {
     setView("landing");
   }
 
+  function registerLocationIssue(error: GeolocationPositionError | null, action: LocationAction) {
+    setLocationAction(action);
+    if (!navigator.geolocation) {
+      setLocationIssue("unsupported");
+      return;
+    }
+    if (!error) {
+      setLocationIssue("unavailable");
+      return;
+    }
+    if (error.code === error.PERMISSION_DENIED) setLocationIssue("permission-denied");
+    else if (error.code === error.TIMEOUT) setLocationIssue("timeout");
+    else setLocationIssue("unavailable");
+  }
+
+  function currentLocation(action: LocationAction, options: PositionOptions = { enableHighAccuracy: true, timeout: 8000, maximumAge: 15000 }) {
+    return new Promise<{ lat: number; lng: number }>((resolve, reject) => {
+      if (!navigator.geolocation) {
+        registerLocationIssue(null, action);
+        reject(new Error("Tu navegador no permite obtener la ubicación."));
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        ({ coords }) => {
+          setLocationIssue(null);
+          resolve({ lat: coords.latitude, lng: coords.longitude });
+        },
+        (error) => {
+          registerLocationIssue(error, action);
+          if (error.code === error.PERMISSION_DENIED) reject(new Error("Circle necesita permiso de ubicación para mostrar personas reales cerca de ti."));
+          else if (error.code === error.TIMEOUT) reject(new Error("La ubicación tardó demasiado en responder. Intenta de nuevo."));
+          else reject(new Error("No pudimos obtener tu ubicación. Revisa que la ubicación del teléfono esté activada."));
+        },
+        options
+      );
+    });
+  }
+
+  async function retryLocationAccess() {
+    if (locationRetrying) return;
+    setLocationRetrying(true);
+    setLocationIssue(null);
+    try {
+      if (locationAction === "update") await updatePresenceAndNearby();
+      else if (locationAction === "save") await saveProfile();
+      else await searchNearby();
+    } finally {
+      setLocationRetrying(false);
+    }
+  }
+
+  function locationHelpText() {
+    if (typeof navigator === "undefined") return "Activa la ubicación para este sitio y vuelve a intentarlo.";
+    const ua = navigator.userAgent || "";
+    const isIOS = /iPhone|iPad|iPod/i.test(ua);
+    const isAndroid = /Android/i.test(ua);
+    if (isIOS) return "En iPhone: abre Ajustes > Privacidad y seguridad > Localización y verifica que esté activa. Después revisa el permiso de ubicación de tu navegador para Circle y selecciona Permitir. Vuelve a Circle y toca Intentar de nuevo.";
+    if (isAndroid) return "En Android: activa Ubicación en el teléfono. Después abre la información/configuración del sitio en tu navegador, entra a Permisos > Ubicación y selecciona Permitir. Vuelve a Circle y toca Intentar de nuevo.";
+    return "Activa la ubicación del equipo y permite el acceso a ubicación para este sitio desde la configuración o el icono de permisos de tu navegador. Después vuelve a Circle y toca Intentar de nuevo.";
+  }
+
   async function searchNearby() {
     setLocating(true);
     setStatus("Buscando personas cerca de ti…");
 
-    if (!navigator.geolocation) {
-      setPeople(demoPeople);
-      setStatus("Mostrando personas disponibles de ejemplo.");
-      setLocating(false);
-      setView("radar");
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(async ({ coords: browserCoords }) => {
-      const location = { lat: browserCoords.latitude, lng: browserCoords.longitude };
+    try {
+      const location = await currentLocation("search", { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 });
       setCoords(location);
 
       if (!supabase) {
         setPeople(demoPeople);
         setStatus("Personas disponibles cerca de ti.");
-        setLocating(false);
         setView("radar");
         return;
       }
@@ -328,14 +385,14 @@ export default function Home() {
 
       setPeople([...realPeople.slice(0, 5), ...demoPeople].slice(0, 10));
       setStatus("Personas disponibles actualizadas.");
-      setLocating(false);
       setView("radar");
-    }, () => {
+    } catch (error: any) {
       setPeople(demoPeople);
-      setStatus("No pudimos acceder a tu ubicación. Mostramos personas de ejemplo.");
-      setLocating(false);
+      setStatus(error?.message || "Activa tu ubicación para ver personas reales cerca de ti.");
       setView("radar");
-    }, { enableHighAccuracy: true, timeout: 7000, maximumAge: 30000 });
+    } finally {
+      setLocating(false);
+    }
   }
 
   function openPerson(person: Person) {
@@ -700,6 +757,7 @@ export default function Home() {
       return;
     }
     if (!navigator.geolocation) {
+      registerLocationIssue(null, "update");
       setStatus("Tu navegador no permite obtener la ubicación.");
       return;
     }
@@ -710,13 +768,7 @@ export default function Home() {
       const user = sessionData.session?.user;
       if (!user) throw new Error("Tu sesión expiró. Inicia sesión nuevamente.");
 
-      const location = await new Promise<{ lat: number; lng: number }>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(
-          ({ coords }) => resolve({ lat: coords.latitude, lng: coords.longitude }),
-          () => reject(new Error("No pudimos obtener tu ubicación. Revisa el permiso de ubicación de Circle.")),
-          { enableHighAccuracy: true, timeout: 7000, maximumAge: 15000 }
-        );
-      });
+      const location = await currentLocation("update", { enableHighAccuracy: true, timeout: 8000, maximumAge: 15000 });
 
       // “Actualizar” refresca el mood/estatus y la presencia, sin modificar el resto del perfil.
       const { error: moodError } = await supabase.from("profiles").update({ intent: mood }).eq("id", user.id);
@@ -781,14 +833,7 @@ export default function Home() {
 
       let locationForPresence = coords;
       if (!locationForPresence) {
-        if (!navigator.geolocation) throw new Error("Circle necesita tu ubicación para activar tu perfil.");
-        locationForPresence = await new Promise<{ lat: number; lng: number }>((resolve, reject) => {
-          navigator.geolocation.getCurrentPosition(
-            ({ coords }) => resolve({ lat: coords.latitude, lng: coords.longitude }),
-            () => reject(new Error("No pudimos obtener tu ubicación. Revisa el permiso de ubicación de Circle.")),
-            { enableHighAccuracy: true, timeout: 7000, maximumAge: 15000 }
-          );
-        });
+        locationForPresence = await currentLocation("save", { enableHighAccuracy: true, timeout: 8000, maximumAge: 15000 });
         setCoords(locationForPresence);
       }
 
@@ -955,12 +1000,25 @@ export default function Home() {
           await refreshNearbyAt(nextCoords, true);
         }
       },
-      () => {},
+      (error) => {
+        if (error.code === error.PERMISSION_DENIED) registerLocationIssue(error, "update");
+      },
       { enableHighAccuracy: true, maximumAge: 20000, timeout: 10000 }
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
   }, [isAuthenticated, profileComplete, view, coords?.lat, coords?.lng]);
+
+  useEffect(() => {
+    if (!locationIssue) return;
+    const retryWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        window.setTimeout(() => { void retryLocationAccess(); }, 350);
+      }
+    };
+    document.addEventListener("visibilitychange", retryWhenVisible);
+    return () => document.removeEventListener("visibilitychange", retryWhenVisible);
+  }, [locationIssue, locationAction]);
 
   return (
     <main className="page-shell">
@@ -1158,6 +1216,25 @@ export default function Home() {
           </div>
         )}
       </section>
+
+      {locationIssue && (
+        <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Permiso de ubicación requerido">
+          <div className="connection-sheet">
+            <div className="connection-success-icon"><MapPin size={32}/></div>
+            <span className="subtle">Ubicación requerida</span>
+            <h2>{locationIssue === "permission-denied" ? "Permite tu ubicación" : locationIssue === "timeout" ? "No pudimos ubicarte" : locationIssue === "unsupported" ? "Ubicación no disponible" : "Activa tu ubicación"}</h2>
+            <p>{locationIssue === "permission-denied" ? "Circle necesita permiso de ubicación para mostrarte personas reales que están cerca. Tu ubicación exacta nunca se muestra a otros usuarios." : locationIssue === "timeout" ? "El teléfono tardó demasiado en responder. Comprueba que la ubicación esté activa y vuelve a intentarlo." : locationIssue === "unsupported" ? "Este navegador no está dando acceso a geolocalización. Prueba con Safari en iPhone o Chrome en Android y permite ubicación para Circle." : "Comprueba que la ubicación del teléfono esté activada y que este sitio tenga permiso para usarla."}</p>
+            <div className="connection-location-card">
+              <ShieldCheck size={21}/>
+              <div><span>Cómo activarla</span><strong>{locationHelpText()}</strong></div>
+            </div>
+            <button className="primary" type="button" onClick={() => void retryLocationAccess()} disabled={locationRetrying}>
+              <RefreshCw size={18} className={locationRetrying ? "spin" : ""}/>{locationRetrying ? "Comprobando…" : "Intentar de nuevo"}
+            </button>
+            <button className="secondary" type="button" onClick={() => setLocationIssue(null)}>Ahora no</button>
+          </div>
+        </div>
+      )}
 
       {connectionNotice && (
         <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Conexión hecha">
