@@ -80,3 +80,10 @@ A profile is considered complete when it has: photo, name, bio, at least one int
 ## Actualizar presencia
 
 El botón **Actualizar** en Mi perfil vuelve a pedir la ubicación actual, refresca el mood, la referencia específica, `last_seen` y las personas reales cercanas. Después regresa al panel principal con el entorno actualizado.
+
+
+## Cómo encontrarme
+
+El campo visible como **Cómo encontrarme** es obligatorio para considerar un perfil completo. Internamente se conserva en `presence.specific_location`. Nunca forma parte de `nearby_profiles`.
+
+Ejecuta también `supabase/how_to_find_me_upgrade.sql` una vez. Ese upgrade bloquea la lectura directa de perfiles/presencia de otros usuarios y crea `request_how_to_find_me(request_id)`: el receptor de una solicitud pendiente puede ver la referencia del emisor; el emisor solo puede ver la referencia del receptor después de que la solicitud sea aceptada.

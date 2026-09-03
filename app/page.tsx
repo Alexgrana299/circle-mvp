@@ -61,13 +61,14 @@ const bubblePositions = [
   { left: "91%", top: "77%", scale: .84 },
 ];
 
-function isProfileComplete(profile: { name: string; bio: string; avatar: string; interests: string[]; mood: string }) {
+function isProfileComplete(profile: { name: string; bio: string; avatar: string; interests: string[]; mood: string; howToFindMe: string }) {
   return Boolean(
     profile.name.trim() &&
     profile.bio.trim() &&
     profile.avatar &&
     profile.interests.length > 0 &&
-    profile.mood
+    profile.mood &&
+    profile.howToFindMe.trim()
   );
 }
 
@@ -111,7 +112,7 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const radius = Number(process.env.NEXT_PUBLIC_NEARBY_RADIUS_METERS || 75);
-  const profileComplete = useMemo(() => isProfileComplete({ name, bio, avatar: avatarUrl, interests, mood }), [name, bio, avatarUrl, interests, mood]);
+  const profileComplete = useMemo(() => isProfileComplete({ name, bio, avatar: avatarUrl, interests, mood, howToFindMe: specificLocation }), [name, bio, avatarUrl, interests, mood, specificLocation]);
   const nearbyCount = useMemo(() => people.length, [people]);
 
   async function loadOwnProfile() {
@@ -449,8 +450,8 @@ export default function Home() {
 
   async function saveProfile() {
     setProfileError("");
-    if (!name.trim() || !bio.trim() || !avatarUrl || !interests.length || !mood) {
-      setProfileError("Completa foto, nombre, descripción, al menos un interés y mood.");
+    if (!name.trim() || !bio.trim() || !avatarUrl || !interests.length || !mood || !specificLocation.trim()) {
+      setProfileError("Completa foto, nombre, descripción, al menos un interés, mood y Cómo encontrarme.");
       return;
     }
     if (!supabase) return setProfileError("Supabase no está conectado.");
@@ -483,16 +484,27 @@ export default function Home() {
       });
       if (profileUpsertError) throw profileUpsertError;
 
-      if (coords) {
-        const { error: presenceError } = await supabase.from("presence").upsert({
-          user_id: user.id,
-          location: `POINT(${coords.lng} ${coords.lat})`,
-          specific_location: specificLocation.trim() || null,
-          is_available: true,
-          last_seen: new Date().toISOString(),
+      let locationForPresence = coords;
+      if (!locationForPresence) {
+        if (!navigator.geolocation) throw new Error("Circle necesita tu ubicación para activar tu perfil.");
+        locationForPresence = await new Promise<{ lat: number; lng: number }>((resolve, reject) => {
+          navigator.geolocation.getCurrentPosition(
+            ({ coords }) => resolve({ lat: coords.latitude, lng: coords.longitude }),
+            () => reject(new Error("No pudimos obtener tu ubicación. Revisa el permiso de ubicación de Circle.")),
+            { enableHighAccuracy: true, timeout: 7000, maximumAge: 15000 }
+          );
         });
-        if (presenceError) throw presenceError;
+        setCoords(locationForPresence);
       }
+
+      const { error: presenceError } = await supabase.from("presence").upsert({
+        user_id: user.id,
+        location: `POINT(${locationForPresence.lng} ${locationForPresence.lat})`,
+        specific_location: specificLocation.trim(),
+        is_available: true,
+        last_seen: new Date().toISOString(),
+      });
+      if (presenceError) throw presenceError;
 
       setAvatarUrl(finalAvatarUrl);
       setAvatarBlob(null);
@@ -614,7 +626,7 @@ export default function Home() {
             <h2>{selected.name}</h2><p>{selected.bio}</p>
             <div className="availability-pill"><span className="availability-dot"/> Disponible cerca de ti</div>
             <div className="section-card"><span className="section-label">Intereses</span><div className="chips">{selected.interests.map(x => <span key={x}>{x}</span>)}</div></div>
-            <div className="permission-copy"><Hand size={22}/><div><strong>No mostramos dónde está exactamente.</strong><span>Si acepta tu solicitud, podrá compartir una referencia como “Piso 7” o “mesa junto a la ventana”.</span></div></div>
+            <div className="permission-copy"><Hand size={22}/><div><strong>No mostramos dónde está exactamente.</strong><span>“Cómo encontrarme” permanece oculto hasta que exista consentimiento. Quien recibe una solicitud sí puede identificar primero a quien la envió.</span></div></div>
             <button className="primary" onClick={() => requestHello(selected)}><Hand size={19}/> Quiero saludarle</button>
           </div>
         )}
@@ -641,8 +653,8 @@ export default function Home() {
             <div className="field-label">Intereses <span className="optional">(elige hasta 5)</span></div>
             <div className="chips selectable">{interestOptions.map(x => <button type="button" key={x} className={interests.includes(x) ? "selected" : ""} onClick={() => setInterests(v => v.includes(x) ? v.filter(i => i !== x) : v.length < 5 ? [...v, x] : v)}>{x}</button>)}</div>
 
-            <label>Especificar ubicación <span className="optional">(opcional)</span><input value={specificLocation} onChange={e => setSpecificLocation(e.target.value)} placeholder="Ej. Piso 7, terraza, mesa junto a la ventana"/></label>
-            <p className="privacy-hint"><ShieldCheck size={14}/> Esta referencia no aparece en el panel de personas cercanas.</p>
+            <label>Cómo encontrarme <span className="required-mark">(obligatorio)</span><input value={specificLocation} onChange={e => setSpecificLocation(e.target.value)} placeholder="Piso 7, al lado de la ventana, playera azul" required/></label>
+            <p className="privacy-hint"><ShieldCheck size={14}/> Este dato permanece oculto. Solo quien reciba una solicitud tuya podrá verlo; si tú recibes una solicitud, la otra persona solo lo verá después de que aceptes.</p>
 
             {profileError && <div className="auth-feedback error">{profileError}</div>}
             <button className="primary" onClick={saveProfile} disabled={profileSaving}>{profileSaving ? "Guardando…" : pendingPerson ? "Guardar y enviar solicitud" : "Guardar perfil"}</button>
@@ -656,8 +668,8 @@ export default function Home() {
             <div className="success-icon">✓</div>
             <span className="subtle">Solicitud lista</span>
             <h2>{pendingPerson?.simulated ? "Solicitud simulada enviada" : "Solicitud enviada"}</h2>
-            <p>{pendingPerson?.simulated ? `${pendingPerson?.name || "La persona"} representa cómo funcionará la solicitud durante la demo.` : `Le avisamos a ${pendingPerson?.name || "la persona"}. Si acepta, podrán compartir una referencia para encontrarse.`}</p>
-            <div className="section-card safety"><ShieldCheck size={22}/><div><strong>Consentimiento primero</strong><span>Ni la ubicación exacta ni una referencia específica se muestran antes de aceptar.</span></div></div>
+            <p>{pendingPerson?.simulated ? `${pendingPerson?.name || "La persona"} representa cómo funcionará la solicitud durante la demo.` : `Le avisamos a ${pendingPerson?.name || "la persona"}. Si acepta, Circle revelará su “Cómo encontrarme” para que puedas acercarte.`}</p>
+            <div className="section-card safety"><ShieldCheck size={22}/><div><strong>Consentimiento primero</strong><span>Tu GPS nunca se comparte. “Cómo encontrarme” solo se revela según las reglas de consentimiento de la solicitud.</span></div></div>
             <button className="primary" onClick={async () => { setPendingPerson(null); await searchNearby(); }}>Volver a personas cerca</button>
           </div>
         )}
