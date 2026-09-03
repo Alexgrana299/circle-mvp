@@ -125,6 +125,7 @@ export default function Home() {
   const [requestNotice, setRequestNotice] = useState("");
   const [activeConversation, setActiveConversation] = useState<ActiveConversation | null>(null);
   const [conversationEnding, setConversationEnding] = useState(false);
+  const [connectionNotice, setConnectionNotice] = useState<ActiveConversation | null>(null);
 
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
@@ -144,6 +145,8 @@ export default function Home() {
   const cropImageRef = useRef<HTMLImageElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const lastPresenceCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
+  const requestsRef = useRef<SocialRequest[]>([]);
+  const notifiedAcceptedRequestIdsRef = useRef<Set<number>>(new Set());
 
   const radius = Number(process.env.NEXT_PUBLIC_NEARBY_RADIUS_METERS || 75);
   const profileComplete = useMemo(() => isProfileComplete({ name, bio, avatar: avatarUrl, interests, mood, howToFindMe: specificLocation }), [name, bio, avatarUrl, interests, mood, specificLocation]);
@@ -257,7 +260,10 @@ export default function Home() {
     setPeople(demoPeople);
     setSelected(null);
     setRequests([]);
+    requestsRef.current = [];
+    notifiedAcceptedRequestIdsRef.current.clear();
     setActiveConversation(null);
+    setConnectionNotice(null);
     setName(""); setBio(""); setSpecificLocation(""); setInterests([]); setMood(""); setAvatarUrl(""); setAvatarBlob(null);
     setView("landing");
   }
@@ -330,8 +336,8 @@ export default function Home() {
     setView("myProfile");
   }
 
-  async function loadRequests(silent = false) {
-    if (!supabase) return;
+  async function loadRequests(silent = false): Promise<SocialRequest[]> {
+    if (!supabase) return [];
     if (!silent) setRequestsLoading(true);
     try {
       const { data, error } = await supabase.rpc("my_social_requests");
@@ -350,20 +356,23 @@ export default function Home() {
         createdAt: r.created_at,
       }));
       setRequests(normalized);
+      requestsRef.current = normalized;
+      return normalized;
     } catch (error: any) {
       if (!silent) setRequestNotice(error?.message || "No pudimos cargar tus solicitudes.");
+      return [] as SocialRequest[];
     } finally {
       if (!silent) setRequestsLoading(false);
     }
   }
 
-  async function loadActiveConversation(silent = false) {
-    if (!supabase) return;
+  async function loadActiveConversation(silent = false): Promise<ActiveConversation | null> {
+    if (!supabase) return null;
     try {
       const { data, error } = await supabase.rpc("my_active_conversation");
       if (error) throw error;
       const row = Array.isArray(data) ? data[0] : data;
-      setActiveConversation(row ? {
+      const conversation = row ? {
         id: Number(row.conversation_id),
         otherId: row.other_id,
         name: row.display_name || "Usuario Circle",
@@ -371,10 +380,37 @@ export default function Home() {
         intent: row.intent || "Charlar",
         howToFindMe: row.how_to_find_me || "",
         startedAt: row.started_at,
-      } : null);
+      } : null;
+      setActiveConversation(conversation);
+      return conversation;
     } catch (error: any) {
       if (!silent) setRequestNotice(error?.message || "No pudimos cargar tu conversación activa.");
+      return null;
     }
+  }
+
+  async function syncSocialState(showAcceptedFeedback = false) {
+    if (!supabase) return;
+    const previous = requestsRef.current;
+    const latest = await loadRequests(true);
+    const conversation = await loadActiveConversation(true);
+
+    if (showAcceptedFeedback && conversation) {
+      const newlyAccepted = latest.find(request =>
+        request.direction === "outgoing" &&
+        request.status === "accepted" &&
+        !notifiedAcceptedRequestIdsRef.current.has(request.id) &&
+        (previous.length === 0 || previous.some(old => old.id === request.id && old.status !== "accepted"))
+      );
+
+      if (newlyAccepted) {
+        notifiedAcceptedRequestIdsRef.current.add(newlyAccepted.id);
+        setConnectionNotice(conversation);
+        setRequestNotice(`${newlyAccepted.name} aceptó tu solicitud.`);
+      }
+    }
+
+    return { requests: latest, conversation };
   }
 
   async function endActiveConversation() {
@@ -688,25 +724,92 @@ export default function Home() {
       setIsAuthenticated(Boolean(data.session));
       if (data.session) {
         await loadOwnProfile();
-        await loadRequests(true);
+        const currentRequests = await loadRequests(true);
+        currentRequests.filter(r => r.direction === "outgoing" && r.status === "accepted").forEach(r => notifiedAcceptedRequestIdsRef.current.add(r.id));
         await loadActiveConversation(true);
       }
     });
     const { data: listener } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setIsAuthenticated(Boolean(session));
-      if (session) { await loadRequests(true); await loadActiveConversation(true); }
+      if (session) {
+        const currentRequests = await loadRequests(true);
+        currentRequests.filter(r => r.direction === "outgoing" && r.status === "accepted").forEach(r => notifiedAcceptedRequestIdsRef.current.add(r.id));
+        await loadActiveConversation(true);
+      }
     });
     return () => listener.subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
-    if (!isAuthenticated || !supabase) return;
-    const timer = window.setInterval(async () => {
-      await loadRequests(true);
-      await loadActiveConversation(true);
+    const client = supabase;
+    if (!isAuthenticated || !client) return;
+    let cancelled = false;
+    let channel: any = null;
+
+    const subscribe = async () => {
+      const { data } = await client.auth.getSession();
+      const userId = data.session?.user.id;
+      if (!userId || cancelled) return;
+
+      channel = client
+        .channel(`circle-social-${userId}`)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "social_requests", filter: `receiver_id=eq.${userId}` },
+          async () => {
+            await syncSocialState(false);
+          }
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "social_requests", filter: `sender_id=eq.${userId}` },
+          async (payload: any) => {
+            const next = payload?.new as { id?: number; status?: string; sender_id?: string } | undefined;
+            await syncSocialState(next?.status === "accepted");
+          }
+        )
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "conversation_members", filter: `user_id=eq.${userId}` },
+          async () => {
+            await loadActiveConversation(true);
+            if (view === "radar" && coords) await refreshNearbyAt(coords, true);
+          }
+        )
+        .subscribe();
+    };
+
+    subscribe();
+    return () => {
+      cancelled = true;
+      if (channel) client.removeChannel(channel);
+    };
+  }, [isAuthenticated, view, coords?.lat, coords?.lng]);
+
+  useEffect(() => {
+    const client = supabase;
+    if (!isAuthenticated || !client) return;
+
+    const resync = async () => {
+      if (document.visibilityState === "hidden") return;
+      await syncSocialState(true);
       if (view === "radar" && coords) await refreshNearbyAt(coords, true);
-    }, 5000);
-    return () => window.clearInterval(timer);
+    };
+
+    const onVisibility = () => { if (document.visibilityState === "visible") void resync(); };
+    window.addEventListener("focus", resync);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    const timer = window.setInterval(async () => {
+      await syncSocialState(true);
+      if (view === "radar" && coords) await refreshNearbyAt(coords, true);
+    }, 15000);
+
+    return () => {
+      window.removeEventListener("focus", resync);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.clearInterval(timer);
+    };
   }, [isAuthenticated, view, coords?.lat, coords?.lng]);
 
   useEffect(() => {
@@ -918,6 +1021,22 @@ export default function Home() {
           </div>
         )}
       </section>
+
+      {connectionNotice && (
+        <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Conexión hecha">
+          <div className="connection-sheet">
+            <div className="connection-success-icon"><Check size={34}/></div>
+            <span className="subtle">Conexión confirmada</span>
+            <h2>¡Conexión hecha!</h2>
+            <p><strong>{connectionNotice.name}</strong> aceptó tu solicitud. Ya puedes acercarte a saludarle.</p>
+            <div className="connection-location-card">
+              <MapPin size={21}/>
+              <div><span>Cómo encontrarle</span><strong>{connectionNotice.howToFindMe || "La persona no agregó una referencia."}</strong></div>
+            </div>
+            <button className="primary" onClick={() => { setConnectionNotice(null); setView("radar"); }}>Entendido</button>
+          </div>
+        </div>
+      )}
 
       {cropSource && (
         <div className="crop-modal" role="dialog" aria-modal="true" aria-label="Encuadrar foto de perfil">

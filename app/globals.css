@@ -48,3 +48,80 @@
 .conversation-banner button{border:0;border-radius:11px;background:#6f50c7;color:#fff;font-size:10px;font-weight:850;padding:9px 10px;cursor:pointer;white-space:nowrap}
 .conversation-banner button:disabled{opacity:.65;cursor:wait}
 @media(max-width:420px){.conversation-banner{grid-template-columns:auto 1fr}.conversation-banner button{grid-column:1/-1;width:100%;min-height:40px}.conversation-banner small{max-width:240px}}
+
+/* Realtime connection feedback */
+.connection-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(9, 18, 37, 0.42);
+  backdrop-filter: blur(10px);
+}
+
+.connection-sheet {
+  width: min(100%, 430px);
+  background: rgba(255,255,255,0.98);
+  border: 1px solid rgba(37, 99, 235, 0.12);
+  border-radius: 30px;
+  padding: 30px 24px 24px;
+  box-shadow: 0 28px 80px rgba(20, 45, 90, 0.24);
+  text-align: center;
+}
+
+.connection-sheet h2 {
+  margin: 7px 0 8px;
+  font-size: clamp(28px, 7vw, 36px);
+}
+
+.connection-sheet > p {
+  margin: 0 auto 20px;
+  max-width: 34ch;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.connection-success-icon {
+  width: 74px;
+  height: 74px;
+  margin: 0 auto 16px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: white;
+  background: linear-gradient(135deg, #25c59a, #16a57f);
+  box-shadow: 0 16px 34px rgba(22, 165, 127, 0.26);
+}
+
+.connection-location-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  margin: 0 0 18px;
+  text-align: left;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(235,245,255,0.98), rgba(241,249,255,0.98));
+  border: 1px solid rgba(48, 132, 255, 0.14);
+  color: #1665c1;
+}
+
+.connection-location-card div {
+  display: grid;
+  gap: 3px;
+}
+
+.connection-location-card span {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: #6a86a8;
+}
+
+.connection-location-card strong {
+  color: #173a62;
+  line-height: 1.4;
+}

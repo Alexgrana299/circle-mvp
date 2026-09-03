@@ -106,3 +106,14 @@ Este incremento agrega:
 ### Limitación PWA importante
 
 iOS y Android pueden suspender una web/PWA cuando queda en segundo plano. Por ello, el seguimiento de movimiento no es garantizado con la app cerrada o suspendida. El botón **Actualizar** continúa siendo la forma explícita de refrescar ubicación, estado y entorno. El seguimiento fiable en background requerirá una app nativa posterior.
+
+## Realtime social sync
+
+After `conversations_upgrade.sql`, run `supabase/realtime_upgrade.sql` once in the Supabase SQL Editor.
+
+This increment adds:
+- Supabase Realtime subscriptions for incoming/outgoing social request changes.
+- Realtime refresh of active conversation membership.
+- A prominent “¡Conexión hecha!” confirmation for the sender when a request is accepted.
+- Automatic re-sync on `focus` and `visibilitychange` for iPhone/PWA resume behavior.
+- 15-second polling retained only as a fallback; Realtime is the primary sync path.
