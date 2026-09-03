@@ -813,18 +813,34 @@ export default function Home() {
   }, [isAuthenticated, view, coords?.lat, coords?.lng]);
 
   useEffect(() => {
-    if (!isAuthenticated || !profileComplete || !supabase || !navigator.geolocation) return;
-    const watchId = navigator.geolocation.watchPosition(async ({ coords: next }) => {
-      const nextCoords = { lat: next.latitude, lng: next.longitude };
-      const previous = lastPresenceCoordsRef.current || coords;
-      if (previous && distanceMeters(previous, nextCoords) < 25) return;
-      lastPresenceCoordsRef.current = nextCoords;
-      setCoords(nextCoords);
-      await supabase.rpc("update_my_presence_location", { user_lat: nextCoords.lat, user_lng: nextCoords.lng });
-      if (view === "radar") await refreshNearbyAt(nextCoords, true);
-    }, () => {}, { enableHighAccuracy: true, maximumAge: 20000, timeout: 10000 });
+    const client = supabase;
+    if (!isAuthenticated || !profileComplete || !client || !navigator.geolocation) return;
+
+    const watchId = navigator.geolocation.watchPosition(
+      async ({ coords: next }) => {
+        const nextCoords = { lat: next.latitude, lng: next.longitude };
+        const previous = lastPresenceCoordsRef.current || coords;
+
+        if (previous && distanceMeters(previous, nextCoords) < 25) return;
+
+        lastPresenceCoordsRef.current = nextCoords;
+        setCoords(nextCoords);
+
+        await client.rpc("update_my_presence_location", {
+          user_lat: nextCoords.lat,
+          user_lng: nextCoords.lng,
+        });
+
+        if (view === "radar") {
+          await refreshNearbyAt(nextCoords, true);
+        }
+      },
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 20000, timeout: 10000 }
+    );
+
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [isAuthenticated, profileComplete, view]);
+  }, [isAuthenticated, profileComplete, view, coords?.lat, coords?.lng]);
 
   return (
     <main className="page-shell">
