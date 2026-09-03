@@ -51,3 +51,20 @@ Sin variables de Supabase, el producto funciona en modo demo.
 - Subida de foto a Supabase Storage.
 - PWA icons + service worker/offline shell.
 - Reportar/bloquear.
+
+## Autenticación por correo y contraseña
+
+Circle usa Supabase Auth para iniciar sesión y crear cuentas con email/password.
+
+En Supabase revisa **Authentication → Providers → Email** y confirma que Email esté habilitado.
+
+Para demos rápidas puedes desactivar temporalmente la confirmación obligatoria de correo en la configuración de Email. Si la confirmación está activa, al crear una cuenta Circle mostrará un mensaje para revisar el correo y luego iniciar sesión.
+
+El flujo implementado es:
+
+1. Portada de Circle.
+2. Iniciar sesión / Crear cuenta.
+3. Al autenticarse, Circle solicita ubicación y abre la vista de personas cercanas.
+4. La sesión persiste mediante Supabase Auth hasta cerrar sesión.
+
+El perfil social (nombre, bio, intereses, mood, foto, ubicación específica) permanece separado de la cuenta y se completará en el siguiente incremento del MVP.

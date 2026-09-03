@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Hand, MapPin, Radio, ShieldCheck, Sparkles } from "lucide-react";
+import type { FormEvent } from "react";
+import { ArrowLeft, Eye, EyeOff, Hand, LogOut, Mail, MapPin, Radio, ShieldCheck, Sparkles } from "lucide-react";
 import { hasSupabase, supabase } from "@/lib/supabase";
 
 type Person = {
@@ -14,7 +15,8 @@ type Person = {
   avatar: string;
 };
 
-type View = "landing" | "radar" | "profile" | "onboarding" | "success";
+type View = "landing" | "auth" | "radar" | "profile" | "onboarding" | "success";
+type AuthMode = "login" | "signup";
 
 const demoPeople: Person[] = [
   { id: "sofia", name: "Sofía", initials: "S", bio: "Arquitectura. Me gusta leer, viajar y descubrir cafés.", intent: "Platicar", interests: ["Viajes", "Libros", "Café"], avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=240&q=80" },
@@ -45,10 +47,106 @@ export default function Home() {
   const [interests, setInterests] = useState<string[]>([]);
   const [pendingPerson, setPendingPerson] = useState<Person | null>(null);
   const [coords, setCoords] = useState<{lat:number; lng:number} | null>(null);
+  const [authMode, setAuthMode] = useState<AuthMode>("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState("");
+  const [authMessage, setAuthMessage] = useState("");
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   const radius = Number(process.env.NEXT_PUBLIC_NEARBY_RADIUS_METERS || 75);
   const interestOptions = ["Viajes", "Libros", "Café", "Startups", "Running", "Tecnología", "Música", "Arte", "Negocios"];
   const nearbyCount = useMemo(() => people.length, [people]);
+
+  async function enterCircle() {
+    if (!supabase) {
+      setAuthError("Circle necesita estar conectado a Supabase para iniciar sesión.");
+      setView("auth");
+      return;
+    }
+    const { data } = await supabase.auth.getSession();
+    if (data.session) {
+      setIsAuthenticated(true);
+      await searchNearby();
+      return;
+    }
+    setView("auth");
+  }
+
+  async function handleAuthSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setAuthError("");
+    setAuthMessage("");
+
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !password) {
+      setAuthError("Escribe tu correo y contraseña.");
+      return;
+    }
+    if (password.length < 6) {
+      setAuthError("La contraseña debe tener al menos 6 caracteres.");
+      return;
+    }
+    if (authMode === "signup" && password !== confirmPassword) {
+      setAuthError("Las contraseñas no coinciden.");
+      return;
+    }
+    if (!supabase) {
+      setAuthError("Supabase no está configurado. Revisa las variables de entorno.");
+      return;
+    }
+
+    setAuthLoading(true);
+    try {
+      if (authMode === "login") {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: normalizedEmail,
+          password,
+        });
+        if (error) throw error;
+        if (!data.session) throw new Error("No se pudo iniciar la sesión.");
+        setIsAuthenticated(true);
+        await searchNearby();
+      } else {
+        const { data, error } = await supabase.auth.signUp({
+          email: normalizedEmail,
+          password,
+        });
+        if (error) throw error;
+
+        if (data.session) {
+          setIsAuthenticated(true);
+          await searchNearby();
+        } else {
+          setAuthMessage("Cuenta creada. Revisa tu correo para confirmar tu cuenta y después inicia sesión.");
+          setAuthMode("login");
+          setPassword("");
+          setConfirmPassword("");
+        }
+      }
+    } catch (error: any) {
+      const message = error?.message || "No pudimos completar la solicitud.";
+      setAuthError(
+        message.toLowerCase().includes("invalid login credentials")
+          ? "Correo o contraseña incorrectos."
+          : message
+      );
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  async function signOut() {
+    if (supabase) await supabase.auth.signOut();
+    setIsAuthenticated(false);
+    setPeople(demoPeople);
+    setIsDemo(true);
+    setSelected(null);
+    setView("landing");
+  }
 
   async function searchNearby() {
     setLocating(true);
@@ -116,7 +214,7 @@ export default function Home() {
     setPendingPerson(person);
     const session = supabase ? (await supabase.auth.getSession()).data.session : null;
     if (!session) {
-      setView("onboarding");
+      setView("auth");
       return;
     }
     if (!isDemo && supabase) {
@@ -128,11 +226,7 @@ export default function Home() {
   async function createProfile() {
     if (!name.trim()) return;
     if (supabase) {
-      let session = (await supabase.auth.getSession()).data.session;
-      if (!session) {
-        const result = await supabase.auth.signInAnonymously();
-        session = result.data.session;
-      }
+      const session = (await supabase.auth.getSession()).data.session;
       if (session) {
         await supabase.from("profiles").upsert({
           id: session.user.id,
@@ -159,6 +253,15 @@ export default function Home() {
     if (view === "landing") setSelected(null);
   }, [view]);
 
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.auth.getSession().then(({ data }) => setIsAuthenticated(Boolean(data.session)));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsAuthenticated(Boolean(session));
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
   return (
     <main className="page-shell">
       <div className="glow glow-one" />
@@ -166,7 +269,12 @@ export default function Home() {
       <section className="phone-card">
         <header className="topbar">
           <button className="brand" onClick={() => setView("landing")}>Circle</button>
-          <span className={`mode-pill ${isDemo ? "demo" : "live"}`}>{isDemo ? "DEMO" : "EN VIVO"}</span>
+          <div className="topbar-actions">
+            {view !== "landing" && view !== "auth" && <span className={`mode-pill ${isDemo ? "demo" : "live"}`}>{isDemo ? "DEMO" : "EN VIVO"}</span>}
+            {isAuthenticated && view !== "landing" && view !== "auth" && (
+              <button className="logout-button" onClick={signOut} aria-label="Cerrar sesión" title="Cerrar sesión"><LogOut size={17}/></button>
+            )}
+          </div>
         </header>
 
         {view === "landing" && (
@@ -180,11 +288,48 @@ export default function Home() {
               <div className="you-dot">Tú</div>
             </div>
 
-            <button className="primary hero-button" onClick={searchNearby} disabled={locating}>
-              <Radio size={20}/>{locating ? "Buscando…" : "Buscar gente para socializar"}
+            <button className="primary hero-button" onClick={enterCircle}>
+              <Radio size={20}/>{isAuthenticated ? "Entrar a Circle" : "Buscar gente para socializar"}
             </button>
             <p className="microcopy"><MapPin size={14}/> Usamos tu ubicación para saber quién está en tu zona, nunca para mostrar tu posición exacta.</p>
             {!hasSupabase && <div className="dev-note">Modo demo activo · conecta Supabase para datos reales.</div>}
+          </div>
+        )}
+
+        {view === "auth" && (
+          <div className="content-pad auth-screen">
+            <button className="back" onClick={() => setView("landing")}><ArrowLeft size={20}/> Volver</button>
+            <span className="subtle">Tu cuenta Circle</span>
+            <h2>{authMode === "login" ? "Bienvenido de vuelta" : "Crea tu cuenta"}</h2>
+            <p>{authMode === "login" ? "Inicia sesión para ver quién está disponible cerca de ti." : "Solo necesitas correo y contraseña. Tu perfil social lo completarás después."}</p>
+
+            <div className="auth-tabs" role="tablist" aria-label="Acceso a Circle">
+              <button type="button" className={authMode === "login" ? "active" : ""} onClick={() => { setAuthMode("login"); setAuthError(""); setAuthMessage(""); }}>Iniciar sesión</button>
+              <button type="button" className={authMode === "signup" ? "active" : ""} onClick={() => { setAuthMode("signup"); setAuthError(""); setAuthMessage(""); }}>Crear cuenta</button>
+            </div>
+
+            <form className="auth-form" onSubmit={handleAuthSubmit}>
+              <label>Correo electrónico
+                <div className="input-with-icon"><Mail size={18}/><input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="tu@correo.com" /></div>
+              </label>
+              <label>Contraseña
+                <div className="input-with-icon password-field"><input type={showPassword ? "text" : "password"} autoComplete={authMode === "login" ? "current-password" : "new-password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" /><button type="button" onClick={() => setShowPassword(v => !v)} aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}>{showPassword ? <EyeOff size={18}/> : <Eye size={18}/>}</button></div>
+              </label>
+              {authMode === "signup" && (
+                <label>Confirmar contraseña
+                  <div className="input-with-icon"><input type={showPassword ? "text" : "password"} autoComplete="new-password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Repite tu contraseña" /></div>
+                </label>
+              )}
+
+              {authError && <div className="auth-feedback error">{authError}</div>}
+              {authMessage && <div className="auth-feedback success">{authMessage}</div>}
+
+              <button className="primary" type="submit" disabled={authLoading}>
+                {authLoading ? "Procesando…" : authMode === "login" ? "Iniciar sesión" : "Crear cuenta"}
+              </button>
+            </form>
+
+            <p className="microcopy center"><ShieldCheck size={14}/> Tu correo se usa para tu cuenta; no se muestra públicamente en Circle.</p>
           </div>
         )}
 
