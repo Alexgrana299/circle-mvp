@@ -270,7 +270,6 @@ export default function Home() {
         <header className="topbar">
           <button className="brand" onClick={() => setView("landing")}>Circle</button>
           <div className="topbar-actions">
-            {view !== "landing" && view !== "auth" && <span className={`mode-pill ${isDemo ? "demo" : "live"}`}>{isDemo ? "DEMO" : "EN VIVO"}</span>}
             {isAuthenticated && view !== "landing" && view !== "auth" && (
               <button className="logout-button" onClick={signOut} aria-label="Cerrar sesión" title="Cerrar sesión"><LogOut size={17}/></button>
             )}
@@ -356,8 +355,6 @@ export default function Home() {
                 </button>
               ))}
             </div>
-            {isDemo && <div className="demo-banner"><Sparkles size={16}/><span><strong>Demo interactiva.</strong> Estos perfiles son simulados para que entiendas Circle antes de registrarte.</span></div>}
-            <button className="secondary" onClick={() => setView("landing")}>Volver</button>
           </div>
         )}
 
@@ -400,7 +397,6 @@ export default function Home() {
           </div>
         )}
       </section>
-      <footer>Construido para validar interacción humana, no otro feed social.</footer>
     </main>
   );
 }
