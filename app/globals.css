@@ -110,3 +110,11 @@
 .pwa-install-sheet .connection-location-card{margin-top:12px}
 @media(max-width:420px){.pwa-setup-card{grid-template-columns:auto 1fr}.pwa-setup-card>button{grid-column:1/-1;width:100%;min-height:38px}}
 @media(display-mode:standalone){body{overscroll-behavior-y:none}.phone-card{min-height:calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px)}}
+
+/* iOS PWA input zoom poka-yoke. Safari auto-zooms focused controls below ~16px. */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{width:100%;max-width:100%;overflow-x:hidden}
+.auth-screen input,.auth-screen select,.auth-screen textarea{font-size:16px!important;line-height:1.35}
+@media(max-width:768px){
+  input,select,textarea{font-size:16px!important}
+}

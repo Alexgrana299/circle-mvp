@@ -1,9 +1,17 @@
 {
+  "id": "/",
   "name": "Circle",
   "short_name": "Circle",
+  "description": "Conoce quién está abierto a hablar a tu alrededor.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#ffffff",
-  "description": "Conoce quién está abierto a hablar a tu alrededor."
+  "orientation": "portrait-primary",
+  "background_color": "#f7faff",
+  "theme_color": "#f7faff",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
 }

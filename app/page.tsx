@@ -256,7 +256,7 @@ export default function Home() {
     const dLng = toRad(b.lng - a.lng);
     const lat1 = toRad(a.lat);
     const lat2 = toRad(b.lat);
-    const h = Math.sin(dLat/2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng/2) ** 2;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
     return 2 * R * Math.asin(Math.sqrt(h));
   }
 
@@ -315,6 +315,7 @@ export default function Home() {
         const { data, error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
         if (error) throw error;
         if (!data.session) throw new Error("No se pudo iniciar la sesión.");
+        normalizeViewportAfterInput();
         setIsAuthenticated(true);
         await loadOwnProfile();
         await loadRequests(true);
@@ -324,6 +325,7 @@ export default function Home() {
         const { data, error } = await supabase.auth.signUp({ email: normalizedEmail, password });
         if (error) throw error;
         if (data.session) {
+          normalizeViewportAfterInput();
           setIsAuthenticated(true);
           await loadOwnProfile();
           await loadRequests(true);
@@ -362,6 +364,45 @@ export default function Home() {
     return Uint8Array.from([...rawData].map(char => char.charCodeAt(0)));
   }
 
+  function withTimeout<T>(
+    promise: PromiseLike<T>,
+    timeoutMs: number,
+    message = "La operación tardó demasiado."
+  ): Promise<T> {
+    return Promise.race([
+      Promise.resolve(promise),
+      new Promise<never>((_, reject) => {
+        window.setTimeout(() => {
+          reject(new Error(message));
+        }, timeoutMs);
+      }),
+    ]);
+  }
+
+  async function ensureServiceWorkerRegistration() {
+    if (!("serviceWorker" in navigator)) throw new Error("Este navegador no soporta Service Workers.");
+    const registration = await withTimeout(
+      navigator.serviceWorker.register("/sw.js", { scope: "/" }),
+      8000,
+      "No pudimos iniciar el servicio de notificaciones."
+    );
+    await registration.update().catch(() => undefined);
+    if (registration.active) return registration;
+    return await withTimeout(
+      navigator.serviceWorker.ready,
+      8000,
+      "Circle no pudo terminar de activar las notificaciones. Cierra la app y vuelve a abrirla."
+    );
+  }
+
+  function normalizeViewportAfterInput() {
+    const active = document.activeElement as HTMLElement | null;
+    active?.blur?.();
+    window.setTimeout(() => {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    }, 80);
+  }
+
   async function installCircle() {
     if (installPrompt) {
       await installPrompt.prompt();
@@ -388,41 +429,81 @@ export default function Home() {
     const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
     if (!vapidKey) {
       setPushState("error");
-      setPushMessage("Falta configurar la llave pública de notificaciones.");
+      setPushMessage("Falta configurar NEXT_PUBLIC_VAPID_PUBLIC_KEY en Vercel.");
       return;
     }
-    if (!supabase) return;
+    if (!supabase) {
+      setPushState("error");
+      setPushMessage("Supabase no está disponible.");
+      return;
+    }
 
     setPushBusy(true);
     try {
-      const permission = await Notification.requestPermission();
+      const permission = Notification.permission === "granted"
+        ? "granted"
+        : await withTimeout(Notification.requestPermission(), 12000, "iPhone no respondió a la solicitud de notificaciones.");
+
       if (permission !== "granted") {
         setPushState(permission === "denied" ? "blocked" : "prompt");
-        setPushMessage(permission === "denied" ? "Las notificaciones están bloqueadas para Circle. Actívalas desde Ajustes del teléfono." : "No se activaron las notificaciones.");
+        setPushMessage(permission === "denied"
+          ? "Las notificaciones están bloqueadas para Circle. Ve a Ajustes > Notificaciones > Circle."
+          : "No se activaron las notificaciones.");
         return;
       }
 
-      const registration = await navigator.serviceWorker.ready;
-      let subscription = await registration.pushManager.getSubscription();
+      const registration = await ensureServiceWorkerRegistration();
+      let subscription = await withTimeout(
+        registration.pushManager.getSubscription(),
+        8000,
+        "No pudimos revisar la suscripción de este dispositivo."
+      );
+
       if (!subscription) {
-        subscription = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(vapidKey),
-        });
+        subscription = await withTimeout(
+          registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(vapidKey),
+          }),
+          15000,
+          "El servicio push tardó demasiado en responder. Revisa tu conexión e inténtalo de nuevo."
+        );
       }
+
       const json = subscription.toJSON();
       const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData.session?.user || !json.endpoint || !json.keys?.p256dh || !json.keys?.auth) throw new Error("No pudimos asociar este dispositivo con tu cuenta.");
+      if (!sessionData.session?.user || !json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
+        throw new Error("No pudimos asociar este iPhone con tu cuenta.");
+      }
 
-      const { error } = await supabase.rpc("save_my_push_subscription", {
-        p_endpoint: json.endpoint,
-        p_p256dh: json.keys.p256dh,
-        p_auth: json.keys.auth,
-        p_user_agent: navigator.userAgent,
-      });
-      if (error) throw error;
+      const rpcResult = await withTimeout(
+        supabase.rpc("save_my_push_subscription", {
+          p_endpoint: json.endpoint,
+          p_p256dh: json.keys.p256dh,
+          p_auth: json.keys.auth,
+          p_user_agent: navigator.userAgent,
+        }),
+        10000,
+        "Supabase tardó demasiado en guardar la suscripción."
+      );
+      if (rpcResult.error) throw rpcResult.error;
+
+      const token = sessionData.session.access_token;
+      const response = await withTimeout(
+        fetch("/api/push/test", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        15000,
+        "La prueba de notificación tardó demasiado."
+      );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result?.ok) {
+        throw new Error(result?.error || "La suscripción se guardó, pero la prueba push falló.");
+      }
+
       setPushState("enabled");
-      setPushMessage("Notificaciones activadas.");
+      setPushMessage("Notificaciones activadas. Te enviamos una notificación de prueba.");
     } catch (error: any) {
       setPushState("error");
       setPushMessage(error?.message || "No pudimos activar las notificaciones.");
@@ -434,8 +515,12 @@ export default function Home() {
   async function syncExistingPushSubscription() {
     if (!supabase || !("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window) || Notification.permission !== "granted") return;
     try {
-      const registration = await navigator.serviceWorker.ready;
-      const subscription = await registration.pushManager.getSubscription();
+      const registration = await ensureServiceWorkerRegistration();
+      const subscription = await withTimeout(
+        registration.pushManager.getSubscription(),
+        8000,
+        "No pudimos revisar la suscripción."
+      );
       if (!subscription) return;
       const json = subscription.toJSON();
       if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) return;
@@ -445,7 +530,7 @@ export default function Home() {
         p_auth: json.keys.auth,
         p_user_agent: navigator.userAgent,
       });
-    } catch {}
+    } catch { }
   }
 
   async function sendPushNotification(recipientId: string, kind: "request" | "accepted", requestId?: number) {
@@ -465,30 +550,63 @@ export default function Home() {
   }
 
   async function signOut() {
-    if (supabase) {
-      if (activeConversation) await supabase.rpc("end_conversation", { p_conversation_id: activeConversation.id });
-      const { data } = await supabase.auth.getSession();
-      if (data.session?.user) await supabase.from("presence").update({ is_available: false }).eq("user_id", data.session.user.id);
-      try {
-        if ("serviceWorker" in navigator && "PushManager" in window) {
-          const registration = await navigator.serviceWorker.ready;
-          const subscription = await registration.pushManager.getSubscription();
-          if (subscription) await supabase.rpc("remove_my_push_subscription", { p_endpoint: subscription.endpoint });
+    const currentSupabase = supabase;
+    try {
+      if (currentSupabase) {
+        const { data } = await currentSupabase.auth.getSession();
+        const user = data.session?.user;
+
+        if (activeConversation) {
+          await withTimeout(
+            currentSupabase.rpc("end_conversation", { p_conversation_id: activeConversation.id }),
+            3500,
+            "timeout"
+          ).catch(() => undefined);
         }
-      } catch {}
-      await supabase.auth.signOut();
+
+        if (user) {
+          await withTimeout(
+            currentSupabase.from("presence").update({ is_available: false }).eq("user_id", user.id),
+            3500,
+            "timeout"
+          ).catch(() => undefined);
+        }
+
+        void (async () => {
+          try {
+            const registration = await ensureServiceWorkerRegistration();
+            const subscription = await withTimeout(registration.pushManager.getSubscription(), 3000, "timeout");
+            if (subscription) {
+              await withTimeout(
+                currentSupabase.rpc("remove_my_push_subscription", { p_endpoint: subscription.endpoint }),
+                3500,
+                "timeout"
+              ).catch(() => undefined);
+            }
+          } catch { }
+        })();
+
+        await withTimeout(currentSupabase.auth.signOut(), 6000, "No pudimos cerrar la sesión en el servidor.");
+      }
+    } catch {
+      try { await currentSupabase?.auth.signOut({ scope: "local" as any }); } catch { }
+    } finally {
+      setIsAuthenticated(false);
+      setPeople(demoPeople);
+      setSelected(null);
+      setRequests([]);
+      requestsRef.current = [];
+      notifiedAcceptedRequestIdsRef.current.clear();
+      setActiveConversation(null);
+      setConnectionNotice(null);
+      setConnectionNoticeRequestId(null);
+      setName(""); setBio(""); setSpecificLocation(""); setInterests([]); setMood(""); setAvatarUrl(""); setAvatarBlob(null);
+      setEmail(""); setPassword(""); setConfirmPassword("");
+      setPushState("idle");
+      setPushMessage("");
+      normalizeViewportAfterInput();
+      setView("landing");
     }
-    setIsAuthenticated(false);
-    setPeople(demoPeople);
-    setSelected(null);
-    setRequests([]);
-    requestsRef.current = [];
-    notifiedAcceptedRequestIdsRef.current.clear();
-    setActiveConversation(null);
-    setConnectionNotice(null);
-    setConnectionNoticeRequestId(null);
-    setName(""); setBio(""); setSpecificLocation(""); setInterests([]); setMood(""); setAvatarUrl(""); setAvatarBlob(null);
-    setView("landing");
   }
 
   function registerLocationIssue(error: GeolocationPositionError | null, action: LocationAction) {
@@ -1394,7 +1512,12 @@ export default function Home() {
     setPwaInstalled(isStandalonePWA());
 
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => undefined);
+      navigator.serviceWorker.register("/sw.js", { scope: "/" })
+        .then(registration => registration.update().catch(() => undefined))
+        .catch(() => {
+          setPushState("error");
+          setPushMessage("Circle no pudo registrar el servicio de notificaciones.");
+        });
     }
 
     const beforeInstall = (event: Event) => {
@@ -1456,10 +1579,10 @@ export default function Home() {
             {isAuthenticated && view !== "landing" && view !== "auth" && (
               <>
                 <button className="notification-button" onClick={async () => { await loadRequests(); setView("requests"); }} aria-label="Solicitudes" title="Solicitudes">
-                  <Bell size={18}/>
+                  <Bell size={18} />
                   {pendingIncomingCount > 0 && <span className="notification-badge">{pendingIncomingCount > 9 ? "9+" : pendingIncomingCount}</span>}
                 </button>
-                <button className="logout-button" onClick={signOut} aria-label="Cerrar sesión" title="Cerrar sesión"><LogOut size={17}/></button>
+                <button className="logout-button" onClick={signOut} aria-label="Cerrar sesión" title="Cerrar sesión"><LogOut size={17} /></button>
               </>
             )}
           </div>
@@ -1467,22 +1590,22 @@ export default function Home() {
 
         {view === "landing" && (
           <div className="landing content-pad">
-            <div className="eyebrow"><Sparkles size={16}/> Conoce a quien ya está aquí</div>
+            <div className="eyebrow"><Sparkles size={16} /> Conoce a quien ya está aquí</div>
             <h1>¿Quién está abierto a <span>hablar contigo</span> cerca?</h1>
             <p className="lead">Circle elimina la parte incómoda de iniciar una conversación: primero sabes quién sí quiere que te acerques.</p>
             <div className="mini-cloud" aria-label="Vista previa de personas cercanas">
-              {demoPeople.slice(0,4).map((p, i) => <img key={p.id} src={p.avatar} alt="Perfil" className={`mini-avatar a${i+1}`} />)}
+              {demoPeople.slice(0, 4).map((p, i) => <img key={p.id} src={p.avatar} alt="Perfil" className={`mini-avatar a${i + 1}`} />)}
               <div className="you-dot">Tú</div>
             </div>
-            <button className="primary hero-button" onClick={enterCircle}><Radio size={20}/>{isAuthenticated ? "Entrar a Circle" : "Buscar gente para socializar"}</button>
-            <p className="microcopy"><MapPin size={14}/> Usamos tu ubicación para saber quién está en tu zona, nunca para mostrar tu posición exacta.</p>
+            <button className="primary hero-button" onClick={enterCircle}><Radio size={20} />{isAuthenticated ? "Entrar a Circle" : "Buscar gente para socializar"}</button>
+            <p className="microcopy"><MapPin size={14} /> Usamos tu ubicación para saber quién está en tu zona, nunca para mostrar tu posición exacta.</p>
             {!hasSupabase && <div className="dev-note">Conecta Supabase para usar cuentas y perfiles reales.</div>}
           </div>
         )}
 
         {view === "auth" && (
           <div className="content-pad auth-screen">
-            <button className="back" onClick={() => setView("landing")}><ArrowLeft size={20}/> Volver</button>
+            <button className="back" onClick={() => setView("landing")}><ArrowLeft size={20} /> Volver</button>
             <span className="subtle">Tu cuenta Circle</span>
             <h2>{authMode === "login" ? "Bienvenido de vuelta" : "Crea tu cuenta"}</h2>
             <p>{authMode === "login" ? "Inicia sesión para ver quién está disponible cerca de ti." : "Solo necesitas correo y contraseña. Tu perfil social lo completarás después."}</p>
@@ -1491,14 +1614,14 @@ export default function Home() {
               <button type="button" className={authMode === "signup" ? "active" : ""} onClick={() => { setAuthMode("signup"); setAuthError(""); setAuthMessage(""); }}>Crear cuenta</button>
             </div>
             <form className="auth-form" onSubmit={handleAuthSubmit}>
-              <label>Correo electrónico<div className="input-with-icon"><Mail size={18}/><input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="tu@correo.com" /></div></label>
-              <label>Contraseña<div className="input-with-icon password-field"><input type={showPassword ? "text" : "password"} autoComplete={authMode === "login" ? "current-password" : "new-password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" /><button type="button" onClick={() => setShowPassword(v => !v)} aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}>{showPassword ? <EyeOff size={18}/> : <Eye size={18}/>}</button></div></label>
+              <label>Correo electrónico<div className="input-with-icon"><Mail size={18} /><input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="tu@correo.com" /></div></label>
+              <label>Contraseña<div className="input-with-icon password-field"><input type={showPassword ? "text" : "password"} autoComplete={authMode === "login" ? "current-password" : "new-password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" /><button type="button" onClick={() => setShowPassword(v => !v)} aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div></label>
               {authMode === "signup" && <label>Confirmar contraseña<div className="input-with-icon"><input type={showPassword ? "text" : "password"} autoComplete="new-password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Repite tu contraseña" /></div></label>}
               {authError && <div className="auth-feedback error">{authError}</div>}
               {authMessage && <div className="auth-feedback success">{authMessage}</div>}
               <button className="primary" type="submit" disabled={authLoading}>{authLoading ? "Procesando…" : authMode === "login" ? "Iniciar sesión" : "Crear cuenta"}</button>
             </form>
-            <p className="microcopy center"><ShieldCheck size={14}/> Tu correo se usa para tu cuenta; no se muestra públicamente en Circle.</p>
+            <p className="microcopy center"><ShieldCheck size={14} /> Tu correo se usa para tu cuenta; no se muestra públicamente en Circle.</p>
           </div>
         )}
 
@@ -1510,7 +1633,7 @@ export default function Home() {
             <div className="status-line">{status}</div>
             {(!pwaInstalled || pushState !== "enabled") && (
               <div className="pwa-setup-card">
-                <div className="pwa-setup-icon"><Bell size={19}/></div>
+                <div className="pwa-setup-icon"><Bell size={19} /></div>
                 <div className="pwa-setup-copy">
                   <strong>{!pwaInstalled && isIOSDevice() ? "Instala Circle en tu inicio" : pushState === "enabled" ? "Circle instalado" : "No te pierdas un saludo"}</strong>
                   <span>{!pwaInstalled && isIOSDevice() ? "Instálala para usar Circle como app y recibir avisos con el teléfono bloqueado." : "Activa notificaciones para enterarte cuando alguien quiera saludarte o acepte tu solicitud."}</span>
@@ -1523,14 +1646,14 @@ export default function Home() {
             )}
             {activeConversation && (
               <div className="conversation-banner">
-                <div className="conversation-icon"><MessageCircle size={19}/></div>
+                <div className="conversation-icon"><MessageCircle size={19} /></div>
                 <div><span>Estás conversando con</span><strong>{activeConversation.name}</strong><small>{activeConversation.howToFindMe ? `Cómo encontrarle: ${activeConversation.howToFindMe}` : "Conversación activa"}</small></div>
                 <button type="button" onClick={endActiveConversation} disabled={conversationEnding || activeConversation.id <= 0}>{conversationEnding ? "Finalizando…" : activeConversation.id <= 0 ? "Sincronizando…" : "Plática concluida"}</button>
               </div>
             )}
             {pendingIncomingCount > 0 && (
               <button className="incoming-alert" onClick={async () => { await loadRequests(); setView("requests"); }}>
-                <Bell size={18}/><div><strong>{pendingIncomingCount === 1 ? "Alguien quiere saludarte" : `${pendingIncomingCount} personas quieren saludarte`}</strong><span>Toca para revisar la solicitud.</span></div><span className="incoming-alert-arrow">›</span>
+                <Bell size={18} /><div><strong>{pendingIncomingCount === 1 ? "Alguien quiere saludarte" : `${pendingIncomingCount} personas quieren saludarte`}</strong><span>Toca para revisar la solicitud.</span></div><span className="incoming-alert-arrow">›</span>
               </button>
             )}
             <div className="people-cloud-frame" aria-label="Personas disponibles cerca. La posición de las burbujas es ilustrativa.">
@@ -1559,12 +1682,12 @@ export default function Home() {
                       {people.map((p, i) => (
                         <button key={p.id} className={`person-bubble ${p.socialStatus === "busy" ? "busy" : ""}`} style={{ left: `${cloudLayout.people[i].x}px`, top: `${cloudLayout.people[i].y}px` }} onClick={() => openPerson(p)}>
                           <span className="intent-tag">{p.intent}</span>
-                          {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name}/> : <span className="avatar-fallback locked-avatar"><UserRound size={28}/></span>}
+                          {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name} /> : <span className="avatar-fallback locked-avatar"><UserRound size={28} /></span>}
                           <strong>{p.name}</strong><small>{p.socialStatus === "busy" ? "Ocupado" : "Disponible"}</small>
                         </button>
                       ))}
                       <button className={`my-bubble ${activeConversation ? "busy" : ""}`} style={{ left: `${cloudLayout.centerX}px`, top: `${cloudLayout.centerY}px` }} onClick={() => openMyProfile()} aria-label="Abrir mi perfil">
-                        {avatarUrl ? <img src={avatarUrl} alt="Tu perfil"/> : <span className="my-avatar-empty"><UserRound size={30}/></span>}
+                        {avatarUrl ? <img src={avatarUrl} alt="Tu perfil" /> : <span className="my-avatar-empty"><UserRound size={30} /></span>}
                         <strong>Tú</strong>
                         <small>{profileComplete ? (activeConversation ? "Ocupado" : mood) : "Completar perfil"}</small>
                       </button>
@@ -1576,7 +1699,7 @@ export default function Home() {
             </div>
             <div className="radar-update-zone">
               <button className="profile-update-button" type="button" onClick={updatePresenceAndNearby} disabled={profileUpdating || locating}>
-                <RefreshCw size={19} className={profileUpdating ? "spin" : ""}/>
+                <RefreshCw size={19} className={profileUpdating ? "spin" : ""} />
                 {profileUpdating ? "Actualizando…" : "Actualizar"}
               </button>
               <p>Actualiza tu ubicación, estado y las personas que aparecen en tu entorno.</p>
@@ -1586,35 +1709,35 @@ export default function Home() {
 
         {view === "profile" && selected && (
           <div className="content-pad profile-screen">
-            <button className="back" onClick={() => setView("radar")}><ArrowLeft size={20}/> Personas cerca</button>
+            <button className="back" onClick={() => setView("radar")}><ArrowLeft size={20} /> Personas cerca</button>
             <div className="profile-avatar-wrap">
-              {profileComplete && selected.avatar ? <img src={selected.avatar} alt={selected.name}/> : <div className="profile-photo-locked"><UserRound size={42}/><span>Completa tu perfil para ver fotos</span></div>}
+              {profileComplete && selected.avatar ? <img src={selected.avatar} alt={selected.name} /> : <div className="profile-photo-locked"><UserRound size={42} /><span>Completa tu perfil para ver fotos</span></div>}
               <span>{selected.intent}</span>
             </div>
             <h2>{selected.name}</h2><p>{selected.bio}</p>
-            <div className={`availability-pill ${selected.socialStatus === "busy" ? "busy" : ""}`}><span className="availability-dot"/> {selected.socialStatus === "busy" ? "Ocupado en una conversación" : "Disponible cerca de ti"}</div>
+            <div className={`availability-pill ${selected.socialStatus === "busy" ? "busy" : ""}`}><span className="availability-dot" /> {selected.socialStatus === "busy" ? "Ocupado en una conversación" : "Disponible cerca de ti"}</div>
             <div className="section-card"><span className="section-label">Intereses</span><div className="chips">{selected.interests.map(x => <span key={x}>{x}</span>)}</div></div>
-            <div className="permission-copy"><Hand size={22}/><div><strong>No mostramos dónde está exactamente.</strong><span>“Cómo encontrarme” permanece oculto hasta que exista consentimiento. Quien recibe una solicitud sí puede identificar primero a quien la envió.</span></div></div>
+            <div className="permission-copy"><Hand size={22} /><div><strong>No mostramos dónde está exactamente.</strong><span>“Cómo encontrarme” permanece oculto hasta que exista consentimiento. Quien recibe una solicitud sí puede identificar primero a quien la envió.</span></div></div>
             {requestNotice && <div className="auth-feedback error">{requestNotice}</div>}
-            {selected.socialStatus === "busy" ? <button className="primary busy-disabled" disabled><MessageCircle size={19}/> Ocupado</button> : activeConversation ? <button className="primary busy-disabled" disabled><MessageCircle size={19}/> Estás ocupado</button> : <button className="primary" onClick={() => requestHello(selected)}><Hand size={19}/> Quiero saludarle</button>}
+            {selected.socialStatus === "busy" ? <button className="primary busy-disabled" disabled><MessageCircle size={19} /> Ocupado</button> : activeConversation ? <button className="primary busy-disabled" disabled><MessageCircle size={19} /> Estás ocupado</button> : <button className="primary" onClick={() => requestHello(selected)}><Hand size={19} /> Quiero saludarle</button>}
           </div>
         )}
 
         {view === "myProfile" && (
           <div className="content-pad onboarding-screen my-profile-screen">
-            <button className="back" onClick={() => { setProfilePrompt(""); setPendingPerson(null); setView("radar"); }}><ArrowLeft size={20}/> Personas cerca</button>
+            <button className="back" onClick={() => { setProfilePrompt(""); setPendingPerson(null); setView("radar"); }}><ArrowLeft size={20} /> Personas cerca</button>
             <span className="subtle">Mi perfil</span><h2>{profileComplete ? "Tu perfil Circle" : "Completa tu perfil"}</h2>
-            {profilePrompt ? <div className="profile-prompt"><ShieldCheck size={18}/><span>{profilePrompt}</span></div> : <p>Esta es la información que las personas cercanas usan para decidir si quieren conocerte.</p>}
+            {profilePrompt ? <div className="profile-prompt"><ShieldCheck size={18} /><span>{profilePrompt}</span></div> : <p>Esta es la información que las personas cercanas usan para decidir si quieren conocerte.</p>}
 
             <input ref={fileInputRef} className="hidden-file-input" type="file" accept="image/*" onChange={e => { onPhotoSelected(e.target.files?.[0]); e.currentTarget.value = ""; }} />
             <button type="button" className={`avatar-picker ${avatarUrl ? "has-photo" : ""}`} onClick={choosePhoto}>
-              {avatarUrl ? <img src={avatarUrl} alt="Tu selfie"/> : <><Camera size={28}/><strong>Selfie</strong><span>Agregar foto desde tu galería</span></>}
-              {avatarUrl && <span className="avatar-edit-badge"><Camera size={16}/></span>}
+              {avatarUrl ? <img src={avatarUrl} alt="Tu selfie" /> : <><Camera size={28} /><strong>Selfie</strong><span>Agregar foto desde tu galería</span></>}
+              {avatarUrl && <span className="avatar-edit-badge"><Camera size={16} /></span>}
             </button>
             <p className="avatar-help">Toca la foto para cambiarla. Podrás encuadrarla antes de guardar.</p>
 
-            <label>Nombre<input value={name} onChange={e => setName(e.target.value)} placeholder="Tu nombre"/></label>
-            <label>Tu descripción<textarea value={bio} onChange={e => setBio(e.target.value)} placeholder="Me gusta viajar, leer y conocer gente nueva."/></label>
+            <label>Nombre<input value={name} onChange={e => setName(e.target.value)} placeholder="Tu nombre" /></label>
+            <label>Tu descripción<textarea value={bio} onChange={e => setBio(e.target.value)} placeholder="Me gusta viajar, leer y conocer gente nueva." /></label>
 
             <div className="field-label">Mood</div>
             <div className="chips selectable mood-grid">{moodOptions.map(x => <button type="button" key={x} className={mood === x ? "selected" : ""} onClick={() => setMood(x)}>{x}</button>)}</div>
@@ -1622,8 +1745,8 @@ export default function Home() {
             <div className="field-label">Intereses <span className="optional">(elige hasta 5)</span></div>
             <div className="chips selectable">{interestOptions.map(x => <button type="button" key={x} className={interests.includes(x) ? "selected" : ""} onClick={() => setInterests(v => v.includes(x) ? v.filter(i => i !== x) : v.length < 5 ? [...v, x] : v)}>{x}</button>)}</div>
 
-            <label>Cómo encontrarme<input value={specificLocation} onChange={e => setSpecificLocation(e.target.value)} placeholder="Piso 7, al lado de la ventana, playera azul" required/></label>
-            <p className="privacy-hint"><ShieldCheck size={14}/> Este dato permanece oculto. Solo quien reciba una solicitud tuya podrá verlo; si tú recibes una solicitud, la otra persona solo lo verá después de que aceptes.</p>
+            <label>Cómo encontrarme<input value={specificLocation} onChange={e => setSpecificLocation(e.target.value)} placeholder="Piso 7, al lado de la ventana, playera azul" required /></label>
+            <p className="privacy-hint"><ShieldCheck size={14} /> Este dato permanece oculto. Solo quien reciba una solicitud tuya podrá verlo; si tú recibes una solicitud, la otra persona solo lo verá después de que aceptes.</p>
 
             {profileError && <div className="auth-feedback error">{profileError}</div>}
             <button className="primary" onClick={saveProfile} disabled={profileSaving}>{profileSaving ? "Guardando…" : pendingPerson ? "Guardar y enviar solicitud" : "Guardar perfil"}</button>
@@ -1634,7 +1757,7 @@ export default function Home() {
 
         {view === "requests" && (
           <div className="content-pad requests-screen">
-            <button className="back" onClick={() => setView("radar")}><ArrowLeft size={20}/> Personas cerca</button>
+            <button className="back" onClick={() => setView("radar")}><ArrowLeft size={20} /> Personas cerca</button>
             <span className="subtle">Solicitudes</span>
             <h2>{requestTab === "incoming" && pendingIncomingCount ? `${pendingIncomingCount} ${pendingIncomingCount === 1 ? "persona quiere" : "personas quieren"} saludarte` : "Tus invitaciones"}</h2>
             <div className="request-tabs" role="tablist" aria-label="Tipo de solicitudes">
@@ -1643,25 +1766,25 @@ export default function Home() {
             </div>
             <p>{requestTab === "incoming" ? "Antes de aceptar puedes identificar a quien quiere acercarse. Tu “Cómo encontrarme” sigue oculto hasta que tú aceptes." : "Aquí puedes revisar tus saludos enviados y cancelar los que sigan pendientes."}</p>
             {requestNotice && <div className="auth-feedback success">{requestNotice}</div>}
-            {requestsLoading ? <div className="requests-empty">Cargando solicitudes…</div> : visibleRequests.length === 0 ? <div className="requests-empty"><Hand size={26}/><strong>{requestTab === "incoming" ? "Aún no tienes solicitudes recibidas" : "Aún no has enviado saludos"}</strong><span>{requestTab === "incoming" ? "Cuando alguien quiera saludarte aparecerá aquí." : "Los saludos que envíes aparecerán aquí."}</span></div> : (
+            {requestsLoading ? <div className="requests-empty">Cargando solicitudes…</div> : visibleRequests.length === 0 ? <div className="requests-empty"><Hand size={26} /><strong>{requestTab === "incoming" ? "Aún no tienes solicitudes recibidas" : "Aún no has enviado saludos"}</strong><span>{requestTab === "incoming" ? "Cuando alguien quiera saludarte aparecerá aquí." : "Los saludos que envíes aparecerán aquí."}</span></div> : (
               <div className="request-list">
                 {visibleRequests.map(request => (
                   <article className={`request-card ${request.status}`} key={request.id}>
                     <div className="request-person">
-                      {request.avatar ? <img src={request.avatar} alt={request.name}/> : <span className="request-avatar-fallback"><UserRound size={25}/></span>}
+                      {request.avatar ? <img src={request.avatar} alt={request.name} /> : <span className="request-avatar-fallback"><UserRound size={25} /></span>}
                       <div><span className="request-direction">{request.direction === "incoming" ? "Quiere saludarte" : "Solicitud enviada"}</span><h3>{request.name}</h3><small>{request.intent}</small></div>
                       <span className={`request-status status-${request.status}`}>{request.status === "pending" ? "Pendiente" : request.status === "accepted" ? "Aceptada" : request.status === "declined" ? "Rechazada" : "Cancelada"}</span>
                     </div>
                     <p className="request-bio">{request.bio}</p>
-                    {!!request.interests.length && <div className="chips request-chips">{request.interests.slice(0,5).map(x => <span key={x}>{x}</span>)}</div>}
+                    {!!request.interests.length && <div className="chips request-chips">{request.interests.slice(0, 5).map(x => <span key={x}>{x}</span>)}</div>}
                     {request.howToFindMe && (
-                      <div className="how-to-find-card"><MapPin size={19}/><div><span>Cómo encontrarme</span><strong>{request.howToFindMe}</strong></div></div>
+                      <div className="how-to-find-card"><MapPin size={19} /><div><span>Cómo encontrarme</span><strong>{request.howToFindMe}</strong></div></div>
                     )}
                     {request.direction === "incoming" && request.status === "pending" && activeConversation && <div className="waiting-copy">Termina tu conversación actual antes de aceptar otra solicitud.</div>}
                     {request.direction === "incoming" && request.status === "pending" && !activeConversation && (
                       <div className="request-actions">
                         <button className="decline-request" disabled={requestActionId === request.id} onClick={() => respondToRequest(request, "declined")}>Ahora no</button>
-                        <button className="accept-request" disabled={requestActionId === request.id} onClick={() => respondToRequest(request, "accepted")}><Check size={18}/>{requestActionId === request.id ? "Procesando…" : "Puede acercarse"}</button>
+                        <button className="accept-request" disabled={requestActionId === request.id} onClick={() => respondToRequest(request, "accepted")}><Check size={18} />{requestActionId === request.id ? "Procesando…" : "Puede acercarse"}</button>
                       </div>
                     )}
                     {request.direction === "outgoing" && request.status === "pending" && (
@@ -1670,7 +1793,7 @@ export default function Home() {
                         <button className="cancel-request" type="button" disabled={requestActionId === request.id} onClick={() => cancelRequest(request)}>{requestActionId === request.id ? "Cancelando…" : "Cancelar saludo"}</button>
                       </div>
                     )}
-                    {request.direction === "outgoing" && request.status === "accepted" && request.howToFindMe && <div className="accepted-copy"><Check size={16}/> Ya puedes acercarte a saludarle. Ambos aparecen como ocupados hasta finalizar la plática.</div>}
+                    {request.direction === "outgoing" && request.status === "accepted" && request.howToFindMe && <div className="accepted-copy"><Check size={16} /> Ya puedes acercarte a saludarle. Ambos aparecen como ocupados hasta finalizar la plática.</div>}
                   </article>
                 ))}
               </div>
@@ -1684,37 +1807,37 @@ export default function Home() {
             <span className="subtle">Solicitud lista</span>
             <h2>Solicitud enviada</h2>
             <p>{pendingPerson?.simulated ? `Este perfil de muestra permite recorrer el flujo de Circle sin afectar a otro usuario.` : `Le avisamos a ${pendingPerson?.name || "la persona"}. Si acepta, Circle revelará su “Cómo encontrarme” para que puedas acercarte.`}</p>
-            <div className="section-card safety"><ShieldCheck size={22}/><div><strong>Consentimiento primero</strong><span>Tu GPS nunca se comparte. “Cómo encontrarme” solo se revela según las reglas de consentimiento de la solicitud.</span></div></div>
+            <div className="section-card safety"><ShieldCheck size={22} /><div><strong>Consentimiento primero</strong><span>Tu GPS nunca se comparte. “Cómo encontrarme” solo se revela según las reglas de consentimiento de la solicitud.</span></div></div>
             <button className="primary" onClick={async () => { setPendingPerson(null); await searchNearby(); }}>Volver a personas cerca</button>
           </div>
         )}
       </section>
 
       {pwaHelpOpen && (
-          <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Instalar Circle">
-            <div className="connection-sheet pwa-install-sheet">
-              <div className="connection-success-icon"><Bell size={28}/></div>
-              <h2>Instala Circle</h2>
-              <p>{isIOSDevice() ? "En iPhone abre Circle en Safari, toca Compartir y selecciona Agregar a pantalla de inicio. Después abre Circle desde su nuevo icono." : "Usa la opción Instalar aplicación o Agregar a pantalla de inicio de tu navegador."}</p>
-              <div className="connection-location-card"><ShieldCheck size={20}/><div><span>Para notificaciones</span><strong>Una vez instalada, abre Circle desde el icono y toca “Activar” cuando te pidamos permiso.</strong></div></div>
-              <button className="primary" type="button" onClick={() => setPwaHelpOpen(false)}>Entendido</button>
-            </div>
+        <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Instalar Circle">
+          <div className="connection-sheet pwa-install-sheet">
+            <div className="connection-success-icon"><Bell size={28} /></div>
+            <h2>Instala Circle</h2>
+            <p>{isIOSDevice() ? "En iPhone abre Circle en Safari, toca Compartir y selecciona Agregar a pantalla de inicio. Después abre Circle desde su nuevo icono." : "Usa la opción Instalar aplicación o Agregar a pantalla de inicio de tu navegador."}</p>
+            <div className="connection-location-card"><ShieldCheck size={20} /><div><span>Para notificaciones</span><strong>Una vez instalada, abre Circle desde el icono y toca “Activar” cuando te pidamos permiso.</strong></div></div>
+            <button className="primary" type="button" onClick={() => setPwaHelpOpen(false)}>Entendido</button>
           </div>
-        )}
+        </div>
+      )}
 
-        {locationIssue && (
+      {locationIssue && (
         <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Permiso de ubicación requerido">
           <div className="connection-sheet">
-            <div className="connection-success-icon"><MapPin size={32}/></div>
+            <div className="connection-success-icon"><MapPin size={32} /></div>
             <span className="subtle">Ubicación requerida</span>
             <h2>{locationIssue === "permission-denied" ? "Permite tu ubicación" : locationIssue === "timeout" ? "No pudimos ubicarte" : locationIssue === "unsupported" ? "Ubicación no disponible" : "Activa tu ubicación"}</h2>
             <p>{locationIssue === "permission-denied" ? "Circle necesita permiso de ubicación para mostrarte personas reales que están cerca. Tu ubicación exacta nunca se muestra a otros usuarios." : locationIssue === "timeout" ? "El teléfono tardó demasiado en responder. Comprueba que la ubicación esté activa y vuelve a intentarlo." : locationIssue === "unsupported" ? "Este navegador no está dando acceso a geolocalización. Prueba con Safari en iPhone o Chrome en Android y permite ubicación para Circle." : "Comprueba que la ubicación del teléfono esté activada y que este sitio tenga permiso para usarla."}</p>
             <div className="connection-location-card">
-              <ShieldCheck size={21}/>
+              <ShieldCheck size={21} />
               <div><span>Cómo activarla</span><strong>{locationHelpText()}</strong></div>
             </div>
             <button className="primary" type="button" onClick={() => void retryLocationAccess()} disabled={locationRetrying}>
-              <RefreshCw size={18} className={locationRetrying ? "spin" : ""}/>{locationRetrying ? "Comprobando…" : "Intentar de nuevo"}
+              <RefreshCw size={18} className={locationRetrying ? "spin" : ""} />{locationRetrying ? "Comprobando…" : "Intentar de nuevo"}
             </button>
             <button className="secondary" type="button" onClick={() => setLocationIssue(null)}>Ahora no</button>
           </div>
@@ -1724,12 +1847,12 @@ export default function Home() {
       {connectionNotice && (
         <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Conexión hecha">
           <div className="connection-sheet">
-            <div className="connection-success-icon"><Check size={34}/></div>
+            <div className="connection-success-icon"><Check size={34} /></div>
             <span className="subtle">Conexión confirmada</span>
             <h2>¡Conexión hecha!</h2>
             <p><strong>{connectionNotice.name}</strong> aceptó tu solicitud. Ya puedes acercarte a saludarle.</p>
             <div className="connection-location-card">
-              <MapPin size={21}/>
+              <MapPin size={21} />
               <div><span>Cómo encontrarle</span><strong>{connectionNotice.howToFindMe || "La persona no agregó una referencia."}</strong></div>
             </div>
             <button className="primary" onClick={() => { acknowledgeConnection(connectionNoticeRequestId); setConnectionNoticeRequestId(null); setConnectionNotice(null); setPendingPerson(null); setView("radar"); }}>Entendido</button>
@@ -1740,14 +1863,14 @@ export default function Home() {
       {cropSource && (
         <div className="crop-modal" role="dialog" aria-modal="true" aria-label="Encuadrar foto de perfil">
           <div className="crop-sheet">
-            <div className="crop-header"><div><span className="subtle">Foto de perfil</span><h3>Encuadra tu foto</h3></div><button type="button" onClick={() => { if (cropSource.startsWith("blob:")) URL.revokeObjectURL(cropSource); setCropSource(""); }} aria-label="Cerrar"><X size={21}/></button></div>
+            <div className="crop-header"><div><span className="subtle">Foto de perfil</span><h3>Encuadra tu foto</h3></div><button type="button" onClick={() => { if (cropSource.startsWith("blob:")) URL.revokeObjectURL(cropSource); setCropSource(""); }} aria-label="Cerrar"><X size={21} /></button></div>
             <p>Mueve la imagen con el dedo y usa el control para acercar o alejar.</p>
             <div className="crop-stage" onPointerDown={handleCropPointerDown} onPointerMove={handleCropPointerMove} onPointerUp={handleCropPointerUp} onPointerCancel={handleCropPointerUp}>
-              <img ref={cropImageRef} src={cropSource} alt="Foto por recortar" draggable={false} onLoad={e => { const img = e.currentTarget; setCropImageSize({ width: img.naturalWidth, height: img.naturalHeight }); setCropOffset({ x: 0, y: 0 }); }} style={cropImageSize.width ? (() => { const g = cropGeometry(); return { width: g.renderedWidth, height: g.renderedHeight, transform: `translate(calc(-50% + ${cropOffset.x}px), calc(-50% + ${cropOffset.y}px))` }; })() : undefined}/>
+              <img ref={cropImageRef} src={cropSource} alt="Foto por recortar" draggable={false} onLoad={e => { const img = e.currentTarget; setCropImageSize({ width: img.naturalWidth, height: img.naturalHeight }); setCropOffset({ x: 0, y: 0 }); }} style={cropImageSize.width ? (() => { const g = cropGeometry(); return { width: g.renderedWidth, height: g.renderedHeight, transform: `translate(calc(-50% + ${cropOffset.x}px), calc(-50% + ${cropOffset.y}px))` }; })() : undefined} />
               <div className="crop-mask" />
             </div>
-            <label className="zoom-control">Zoom<input type="range" min="1" max="3" step="0.01" value={cropZoom} onChange={e => { const next = Number(e.target.value); setCropZoom(next); setCropOffset(current => clampOffset(current, next)); }}/></label>
-            <div className="crop-actions"><button type="button" className="secondary" onClick={choosePhoto}>Elegir otra</button><button type="button" className="primary" onClick={acceptCrop}><Check size={18}/> Usar foto</button></div>
+            <label className="zoom-control">Zoom<input type="range" min="1" max="3" step="0.01" value={cropZoom} onChange={e => { const next = Number(e.target.value); setCropZoom(next); setCropOffset(current => clampOffset(current, next)); }} /></label>
+            <div className="crop-actions"><button type="button" className="secondary" onClick={choosePhoto}>Elegir otra</button><button type="button" className="primary" onClick={acceptCrop}><Check size={18} /> Usar foto</button></div>
           </div>
         </div>
       )}
