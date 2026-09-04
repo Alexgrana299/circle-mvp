@@ -70,7 +70,7 @@ type SocialRequest = {
 };
 
 
-const moodOptions = ["Socializar", "Entrenar", "Trabajar", "Comer", "Fiesta", "Networking", "Estudiar", "Salir de fiesta"];
+const moodOptions = ["Socializar", "Entrenar", "Trabajar", "Comer", "Fiesta", "Networking"];
 const interestOptions = ["Viajes", "Libros", "Café", "Startups", "Running", "Tecnología", "Música", "Arte", "Negocios", "Cine", "Fotografía", "Deportes", "Mascotas"];
 
 const demoPeople: Person[] = [
@@ -1788,7 +1788,7 @@ export default function Home() {
               {avatarUrl ? <img src={avatarUrl} alt="Tu selfie"/> : <><Camera size={28}/><strong>Selfie</strong><span>Agregar foto desde tu galería</span></>}
               {avatarUrl && <span className="avatar-edit-badge"><Camera size={16}/></span>}
             </button>
-            <p className="avatar-help">Toca la foto para cambiarla. Podrás encuadrarla antes de guardar.</p>
+            <p className="avatar-help">Tu foto ayudará a otros usuarios a reconocerte fácilmente.</p>
 
             <label>Nombre<input value={name} onChange={e => setName(e.target.value)} placeholder="Tu nombre"/></label>
             <label>Sobre mí<textarea value={bio} onChange={e => setBio(e.target.value)} placeholder="Me gusta viajar, leer y conocer gente nueva."/></label>
