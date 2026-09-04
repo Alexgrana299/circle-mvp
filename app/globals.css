@@ -121,3 +121,46 @@ body{width:100%;max-width:100%;overflow-x:hidden}
 
 /* Private locator split: separa visualmente Dónde se ubica / Qué está usando */
 .how-to-find-card strong + span{margin-top:8px}
+
+/* Full-screen social map layout: fixed header + floating controls over the canvas. */
+.phone-card.radar-mode{display:flex;flex-direction:column;height:min(900px,calc(100dvh - max(34px,env(safe-area-inset-top)) - max(22px,env(safe-area-inset-bottom))));min-height:620px}
+.phone-card.radar-mode .topbar{position:relative;z-index:80;flex:0 0 74px;background:rgba(255,255,255,.94);box-shadow:0 4px 18px rgba(24,47,93,.05)}
+.radar-screen{position:relative;flex:1;min-height:0;padding:0;overflow:hidden;background:#f4f6f8}
+.radar-map-stage{position:absolute;inset:0;margin:0;border:0;border-radius:0;background:#f4f6f8;overflow:hidden}
+.radar-map-stage .people-cloud-scroll{height:100%;width:100%}
+.radar-map-stage .social-map-background{border-radius:0}
+.radar-map-stage .cloud-note{bottom:112px;background:rgba(255,255,255,.78);backdrop-filter:blur(8px)}
+.radar-floating-stack{position:absolute;z-index:45;left:16px;right:16px;top:16px;display:flex;flex-direction:column;gap:9px;pointer-events:none;max-height:calc(100% - 150px);overflow:visible}
+.radar-floating-stack>*{pointer-events:auto}
+.nearby-floating-card{align-self:flex-start;min-width:185px;max-width:min(285px,78vw);padding:12px 14px;border:1px solid rgba(219,226,238,.9);border-radius:18px;background:rgba(255,255,255,.89);box-shadow:0 10px 30px rgba(25,48,88,.12);backdrop-filter:blur(14px)}
+.nearby-floating-card .subtle{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#8390a5}
+.nearby-floating-card h2{font-size:20px;letter-spacing:-.6px;margin:2px 0 1px}
+.nearby-floating-card .nearby-summary{margin-top:1px}
+.nearby-floating-card .status-line{font-size:9.5px;margin:5px 0 0;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.radar-overlay-card{margin:0;max-width:min(390px,calc(100vw - 32px));box-shadow:0 10px 30px rgba(25,48,88,.13);backdrop-filter:blur(14px)}
+.radar-update-zone.radar-update-floating{position:absolute;z-index:50;left:16px;right:16px;bottom:calc(12px + env(safe-area-inset-bottom));margin:0;padding:0;background:transparent;border:0;backdrop-filter:none}
+.radar-update-floating .profile-update-button{min-height:52px;border:1px solid rgba(255,255,255,.45);box-shadow:0 12px 30px rgba(36,107,254,.3)}
+.radar-update-floating p{display:block;width:max-content;max-width:calc(100% - 18px);margin:7px auto 0!important;padding:5px 9px;border:1px solid rgba(227,233,241,.8);border-radius:999px;background:rgba(255,255,255,.82);backdrop-filter:blur(10px);box-shadow:0 5px 18px rgba(25,48,88,.08);color:#6f7b91!important;font-size:9px!important;line-height:1.25!important}
+
+@media(max-width:480px){
+  .phone-card.radar-mode{height:100dvh;min-height:100dvh}
+  .phone-card.radar-mode .topbar{height:calc(64px + env(safe-area-inset-top));flex-basis:calc(64px + env(safe-area-inset-top));padding-top:env(safe-area-inset-top);padding-left:18px;padding-right:18px}
+  .radar-floating-stack{left:12px;right:12px;top:12px;gap:7px;max-height:calc(100% - 132px)}
+  .nearby-floating-card{padding:10px 12px;border-radius:16px;min-width:170px;max-width:76vw}
+  .nearby-floating-card h2{font-size:18px}
+  .radar-update-zone.radar-update-floating{left:12px;right:12px;bottom:calc(10px + env(safe-area-inset-bottom));padding:0}
+  .radar-update-floating .profile-update-button{min-height:50px;border-radius:15px}
+  .radar-map-stage .cloud-note{bottom:104px;font-size:9px}
+  .radar-overlay-card.pwa-setup-card{max-width:100%}
+}
+
+@media(max-height:700px) and (max-width:480px){
+  .nearby-floating-card{padding:8px 11px}.nearby-floating-card h2{font-size:17px}
+  .radar-floating-stack{top:8px;gap:6px}
+  .radar-update-floating p{font-size:8.5px!important}
+}
+
+@media(max-width:480px){
+  .page-shell.radar-page-shell{height:100dvh;min-height:100dvh;padding:0!important;overflow:hidden}
+  .page-shell.radar-page-shell .phone-card.radar-mode{height:100dvh;min-height:100dvh;max-height:100dvh}
+}
