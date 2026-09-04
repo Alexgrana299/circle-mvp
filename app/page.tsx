@@ -70,15 +70,15 @@ type SocialRequest = {
 };
 
 
-const moodOptions = ["Platicar", "Entrenar", "Trabajar", "Comer"];
+const moodOptions = ["Socializar", "Entrenar", "Trabajar", "Comer", "Fiesta", "Networking", "Estudiar", "Salir de fiesta"];
 const interestOptions = ["Viajes", "Libros", "Café", "Startups", "Running", "Tecnología", "Música", "Arte", "Negocios", "Cine", "Fotografía", "Deportes", "Mascotas"];
 
 const demoPeople: Person[] = [
-  { id: "demo-sofia", name: "Sofía", initials: "S", bio: "Arquitectura. Me gusta leer, viajar y descubrir cafés.", intent: "Platicar", interests: ["Viajes", "Libros", "Café"], avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
+  { id: "demo-sofia", name: "Sofía", initials: "S", bio: "Arquitectura. Me gusta leer, viajar y descubrir cafés.", intent: "Socializar", interests: ["Viajes", "Libros", "Café"], avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
   { id: "demo-diego", name: "Diego", initials: "D", bio: "Emprendimiento, tecnología y running.", intent: "Trabajar", interests: ["Startups", "Tecnología", "Running"], avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
-  { id: "demo-andrea", name: "Andrea", initials: "A", bio: "Diseño, música y conocer gente nueva.", intent: "Platicar", interests: ["Arte", "Música", "Viajes"], avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
+  { id: "demo-andrea", name: "Andrea", initials: "A", bio: "Diseño, música y conocer gente nueva.", intent: "Socializar", interests: ["Arte", "Música", "Viajes"], avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
   { id: "demo-carlos", name: "Carlos", initials: "C", bio: "Negocios, fitness y café.", intent: "Entrenar", interests: ["Negocios", "Running", "Café"], avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
-  { id: "demo-fer", name: "Fernanda", initials: "F", bio: "Libros, cine y nuevas experiencias.", intent: "Platicar", interests: ["Libros", "Arte", "Viajes"], avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
+  { id: "demo-fer", name: "Fernanda", initials: "F", bio: "Libros, cine y nuevas experiencias.", intent: "Socializar", interests: ["Libros", "Arte", "Viajes"], avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
 ];
 
 const CLOUD_RING_GAP = 150;
@@ -708,7 +708,7 @@ export default function Home() {
         name: p.display_name || "Alguien cerca",
         initials: (p.display_name || "C").slice(0, 1).toUpperCase(),
         bio: p.bio || "Disponible para socializar.",
-        intent: p.intent || "Platicar",
+        intent: p.intent || "Socializar",
         interests: p.interests || [],
         avatar: p.avatar_url || "",
         socialStatus: p.social_status === "busy" ? "busy" : "available",
@@ -765,7 +765,7 @@ export default function Home() {
         bio: r.bio || "Disponible para socializar.",
         avatar: r.avatar_url || "",
         interests: r.interests || [],
-        intent: r.intent || "Platicar",
+        intent: r.intent || "Socializar",
         whereIAm: r.where_i_am || "",
         whatImWearing: r.what_im_wearing || "",
         createdAt: r.created_at,
@@ -792,7 +792,7 @@ export default function Home() {
         otherId: row.other_id,
         name: row.display_name || "Usuario Circle",
         avatar: row.avatar_url || "",
-        intent: row.intent || "Platicar",
+        intent: row.intent || "Socializar",
         whereIAm: row.where_i_am || "",
         whatImWearing: row.what_im_wearing || "",
         startedAt: row.started_at,
@@ -1093,7 +1093,7 @@ export default function Home() {
       name: p.display_name || "Alguien cerca",
       initials: (p.display_name || "C").slice(0, 1).toUpperCase(),
       bio: p.bio || "Disponible para socializar.",
-      intent: p.intent || "Platicar",
+      intent: p.intent || "Socializar",
       interests: p.interests || [],
       avatar: p.avatar_url || "",
       socialStatus: p.social_status === "busy" ? "busy" : "available",
