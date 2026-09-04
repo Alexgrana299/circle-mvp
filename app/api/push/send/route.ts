@@ -46,9 +46,12 @@ export async function POST(request: Request) {
 
   const { data: profile } = await admin.from("profiles").select("display_name").eq("id", actor.id).maybeSingle();
   const actorName = profile?.display_name || "Alguien";
+  const title = kind === "request"
+    ? `${actorName} quiere saludarte`
+    : `${actorName} aceptó tu saludo`;
   const body = kind === "request"
-    ? `${actorName} quiere saludarte.`
-    : `${actorName} aceptó tu saludo. Ya pueden encontrarse.`;
+    ? "Toca para ver la solicitud."
+    : "Toca para ver la conexión.";
 
   webpush.setVapidDetails(vapidSubject, vapidPublic!, vapidPrivate!);
   const { data: subscriptions, error } = await admin
@@ -58,9 +61,11 @@ export async function POST(request: Request) {
   if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
 
   const payload = JSON.stringify({
-    title: "Circle",
+    title,
     body,
-    url: "/",
+    // Recibida -> pestaña Recibidas. Aceptada -> pestaña Enviadas, donde vive
+    // la solicitud que cambió de estado.
+    url: kind === "request" ? "/?open=requests&tab=incoming" : "/?open=requests&tab=outgoing",
     tag: kind === "request" ? `circle-request-${relation.id}` : `circle-accepted-${relation.id}`,
   });
 
