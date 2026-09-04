@@ -53,7 +53,7 @@
 .people-cloud-frame{position:relative;margin:0 -6px 10px;border-radius:28px;border:1px solid #edf2fb;background:linear-gradient(180deg,#fbfdff,#f7faff);overflow:hidden}
 .social-map-background{position:absolute;inset:0;width:100%;height:100%;border:0;z-index:0;pointer-events:none;filter:grayscale(1) saturate(0) contrast(.78) brightness(1.12);opacity:.24;transform:scale(1.02);transform-origin:center;background:#f4f6f8}
 .people-cloud-frame::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;background:rgba(249,251,253,.58)}
-.people-cloud-scroll{position:relative;z-index:2;height:520px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#d7e2f2 transparent;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y}
+.people-cloud-scroll{position:relative;z-index:2;height:520px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#d7e2f2 transparent;-webkit-overflow-scrolling:touch;touch-action:none;cursor:grab;user-select:none}
 .people-cloud-canvas{position:relative;min-width:100%;min-height:100%;background:radial-gradient(circle at 48% 45%,rgba(47,116,255,.045),transparent 30%),radial-gradient(circle at 75% 72%,rgba(11,168,142,.035),transparent 25%)}
 .people-cloud-canvas .person-bubble{transform:translate(-50%,-50%);width:126px}
 .people-cloud-canvas .my-bubble{transform:translate(-50%,-50%)}
@@ -96,3 +96,7 @@
   .canvas-controls button{height:32px;min-width:32px}
   .connection-sheet h2{font-size:25px}
 }
+
+/* Native-feeling social canvas gestures: one-finger pan + two-finger pinch zoom. */
+.people-cloud-scroll:active{cursor:grabbing}
+.people-cloud-scroll button,.people-cloud-scroll img{-webkit-user-drag:none}

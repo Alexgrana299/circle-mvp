@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { FormEvent, PointerEvent as ReactPointerEvent } from "react";
+import type { FormEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import {
   ArrowLeft,
   Bell,
@@ -211,6 +211,15 @@ export default function Home() {
   const notifiedAcceptedRequestIdsRef = useRef<Set<number>>(new Set());
   const peopleCanvasRef = useRef<HTMLDivElement | null>(null);
   const [canvasZoom, setCanvasZoom] = useState(1);
+  const canvasZoomRef = useRef(1);
+  const canvasPointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const canvasGestureRef = useRef<{
+    mode: "idle" | "pan" | "pinch";
+    lastX: number;
+    lastY: number;
+    lastDistance: number;
+  }>({ mode: "idle", lastX: 0, lastY: 0, lastDistance: 0 });
+  const suppressCanvasClickRef = useRef(false);
 
   function connectionAckKey(requestId: number) { return `circle_connection_ack_${requestId}`; }
   function isConnectionAcknowledged(requestId: number) {
@@ -1102,17 +1111,6 @@ export default function Home() {
     });
   }
 
-  function fitPeopleCanvas() {
-    const el = peopleCanvasRef.current;
-    if (!el) return;
-    const padding = 22;
-    const fitX = Math.max(0.28, (el.clientWidth - padding) / cloudLayout.width);
-    const fitY = Math.max(0.28, (el.clientHeight - padding) / cloudLayout.height);
-    const nextZoom = Math.min(1, fitX, fitY);
-    setCanvasZoom(nextZoom);
-    centerPeopleCanvas();
-  }
-
   function setComfortableCanvasZoom() {
     const el = peopleCanvasRef.current;
     if (!el) return;
@@ -1120,31 +1118,128 @@ export default function Home() {
     const fitX = Math.max(0.28, (el.clientWidth - padding) / cloudLayout.width);
     const fitY = Math.max(0.28, (el.clientHeight - padding) / cloudLayout.height);
     const exactFit = Math.min(1, fitX, fitY);
-    // Entry view: keep people readable and show a useful overview. Users can tap Fit to see absolutely everyone.
+    // Entry view: show several people at once while keeping names readable.
     const comfortableFloor = el.clientWidth <= 480 ? 0.72 : 0.78;
     const nextZoom = Math.min(1, Math.max(exactFit, comfortableFloor));
+    canvasZoomRef.current = nextZoom;
     setCanvasZoom(nextZoom);
     centerPeopleCanvas();
   }
 
-  function changeCanvasZoom(delta: number) {
+  function applyCanvasZoom(nextValue: number, anchorX?: number, anchorY?: number) {
     const el = peopleCanvasRef.current;
     if (!el) return;
-    const oldZoom = canvasZoom;
-    const nextZoom = Math.min(1.45, Math.max(0.28, Number((oldZoom + delta).toFixed(2))));
-    if (nextZoom === oldZoom) return;
 
-    const centerX = el.scrollLeft + el.clientWidth / 2;
-    const centerY = el.scrollTop + el.clientHeight / 2;
+    const oldZoom = canvasZoomRef.current;
+    const nextZoom = Math.min(2.2, Math.max(0.35, Number(nextValue.toFixed(3))));
+    if (Math.abs(nextZoom - oldZoom) < 0.002) return;
+
+    const localX = anchorX ?? el.clientWidth / 2;
+    const localY = anchorY ?? el.clientHeight / 2;
+    const contentX = el.scrollLeft + localX;
+    const contentY = el.scrollTop + localY;
     const ratio = nextZoom / oldZoom;
+
+    canvasZoomRef.current = nextZoom;
     setCanvasZoom(nextZoom);
 
     window.requestAnimationFrame(() => {
       const current = peopleCanvasRef.current;
       if (!current) return;
-      current.scrollLeft = Math.max(0, centerX * ratio - current.clientWidth / 2);
-      current.scrollTop = Math.max(0, centerY * ratio - current.clientHeight / 2);
+      current.scrollLeft = Math.max(0, contentX * ratio - localX);
+      current.scrollTop = Math.max(0, contentY * ratio - localY);
     });
+  }
+
+  function canvasPointerDistance() {
+    const points = Array.from(canvasPointersRef.current.values());
+    if (points.length < 2) return 0;
+    return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+  }
+
+  function canvasPointerMidpoint(el: HTMLDivElement) {
+    const points = Array.from(canvasPointersRef.current.values());
+    if (points.length < 2) return { x: el.clientWidth / 2, y: el.clientHeight / 2 };
+    const rect = el.getBoundingClientRect();
+    return {
+      x: (points[0].x + points[1].x) / 2 - rect.left,
+      y: (points[0].y + points[1].y) / 2 - rect.top,
+    };
+  }
+
+  function handleCanvasPointerDown(e: ReactPointerEvent<HTMLDivElement>) {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
+    canvasPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (canvasPointersRef.current.size >= 2) {
+      canvasGestureRef.current = {
+        mode: "pinch",
+        lastX: 0,
+        lastY: 0,
+        lastDistance: canvasPointerDistance(),
+      };
+      return;
+    }
+
+    canvasGestureRef.current = { mode: "pan", lastX: e.clientX, lastY: e.clientY, lastDistance: 0 };
+    suppressCanvasClickRef.current = false;
+  }
+
+  function handleCanvasPointerMove(e: ReactPointerEvent<HTMLDivElement>) {
+    if (!canvasPointersRef.current.has(e.pointerId)) return;
+    const el = e.currentTarget;
+    canvasPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (canvasPointersRef.current.size >= 2) {
+      e.preventDefault();
+      const distance = canvasPointerDistance();
+      const previousDistance = canvasGestureRef.current.lastDistance || distance;
+      if (previousDistance > 0 && distance > 0) {
+        const midpoint = canvasPointerMidpoint(el);
+        applyCanvasZoom(canvasZoomRef.current * (distance / previousDistance), midpoint.x, midpoint.y);
+        if (Math.abs(distance - previousDistance) > 1) suppressCanvasClickRef.current = true;
+      }
+      canvasGestureRef.current.mode = "pinch";
+      canvasGestureRef.current.lastDistance = distance;
+      return;
+    }
+
+    if (canvasGestureRef.current.mode !== "pan") return;
+    const dx = e.clientX - canvasGestureRef.current.lastX;
+    const dy = e.clientY - canvasGestureRef.current.lastY;
+    if (Math.abs(dx) + Math.abs(dy) > 2) {
+      e.preventDefault();
+      suppressCanvasClickRef.current = true;
+      el.scrollLeft -= dx;
+      el.scrollTop -= dy;
+    }
+    canvasGestureRef.current.lastX = e.clientX;
+    canvasGestureRef.current.lastY = e.clientY;
+  }
+
+  function handleCanvasPointerUp(e: ReactPointerEvent<HTMLDivElement>) {
+    canvasPointersRef.current.delete(e.pointerId);
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+
+    const remaining = Array.from(canvasPointersRef.current.values());
+    if (remaining.length >= 2) {
+      canvasGestureRef.current.mode = "pinch";
+      canvasGestureRef.current.lastDistance = canvasPointerDistance();
+    } else if (remaining.length === 1) {
+      canvasGestureRef.current = { mode: "pan", lastX: remaining[0].x, lastY: remaining[0].y, lastDistance: 0 };
+    } else {
+      canvasGestureRef.current.mode = "idle";
+      canvasGestureRef.current.lastDistance = 0;
+    }
+  }
+
+  function handleCanvasClickCapture(e: ReactMouseEvent<HTMLDivElement>) {
+    if (!suppressCanvasClickRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    suppressCanvasClickRef.current = false;
   }
 
   useEffect(() => {
@@ -1255,7 +1350,15 @@ export default function Home() {
                   aria-hidden="true"
                 />
               )}
-              <div className="people-cloud-scroll" ref={peopleCanvasRef}>
+              <div
+                className="people-cloud-scroll"
+                ref={peopleCanvasRef}
+                onPointerDown={handleCanvasPointerDown}
+                onPointerMove={handleCanvasPointerMove}
+                onPointerUp={handleCanvasPointerUp}
+                onPointerCancel={handleCanvasPointerUp}
+                onClickCapture={handleCanvasClickCapture}
+              >
                 <div className="people-cloud-world" style={{ width: `max(100%, ${Math.round(cloudLayout.width * canvasZoom)}px)`, height: `max(100%, ${Math.round(cloudLayout.height * canvasZoom)}px)` }}>
                   <div className="people-cloud-scale-layer" style={{ width: `${cloudLayout.width * canvasZoom}px`, height: `${cloudLayout.height * canvasZoom}px` }}>
                     <div className="people-cloud-canvas" style={{ width: `${cloudLayout.width}px`, height: `${cloudLayout.height}px`, transform: `scale(${canvasZoom})` }}>
@@ -1275,12 +1378,7 @@ export default function Home() {
                   </div>
                 </div>
               </div>
-              <div className="canvas-controls" aria-label="Controles del panorama">
-                <button type="button" onClick={() => changeCanvasZoom(-0.12)} aria-label="Alejar">−</button>
-                <button type="button" className="fit-control" onClick={fitPeopleCanvas}>Fit</button>
-                <button type="button" onClick={() => changeCanvasZoom(0.12)} aria-label="Acercar">+</button>
-              </div>
-              <div className="cloud-note">{Math.round(canvasZoom * 100)}% · mapa de referencia · desliza para explorar</div>
+              <div className="cloud-note">{Math.round(canvasZoom * 100)}% · pellizca para zoom · arrastra para explorar</div>
             </div>
             <div className="radar-update-zone">
               <button className="profile-update-button" type="button" onClick={updatePresenceAndNearby} disabled={profileUpdating || locating}>
