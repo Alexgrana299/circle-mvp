@@ -49,7 +49,8 @@ type ActiveConversation = {
   name: string;
   avatar: string;
   intent: string;
-  howToFindMe: string;
+  whereIAm: string;
+  whatImWearing: string;
   startedAt: string;
 };
 
@@ -63,20 +64,21 @@ type SocialRequest = {
   avatar: string;
   interests: string[];
   intent: string;
-  howToFindMe: string;
+  whereIAm: string;
+  whatImWearing: string;
   createdAt: string;
 };
 
 
-const moodOptions = ["Networking", "Entrenar", "Charlar", "Hacer amigos"];
-const interestOptions = ["Viajes", "Libros", "Café", "Startups", "Running", "Tecnología", "Música", "Arte", "Negocios"];
+const moodOptions = ["Platicar", "Entrenar", "Trabajar", "Comer"];
+const interestOptions = ["Viajes", "Libros", "Café", "Startups", "Running", "Tecnología", "Música", "Arte", "Negocios", "Cine", "Fotografía", "Deportes", "Mascotas"];
 
 const demoPeople: Person[] = [
-  { id: "demo-sofia", name: "Sofía", initials: "S", bio: "Arquitectura. Me gusta leer, viajar y descubrir cafés.", intent: "Charlar", interests: ["Viajes", "Libros", "Café"], avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
-  { id: "demo-diego", name: "Diego", initials: "D", bio: "Emprendimiento, tecnología y running.", intent: "Networking", interests: ["Startups", "Tecnología", "Running"], avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
-  { id: "demo-andrea", name: "Andrea", initials: "A", bio: "Diseño, música y conocer gente nueva.", intent: "Hacer amigos", interests: ["Arte", "Música", "Viajes"], avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
+  { id: "demo-sofia", name: "Sofía", initials: "S", bio: "Arquitectura. Me gusta leer, viajar y descubrir cafés.", intent: "Platicar", interests: ["Viajes", "Libros", "Café"], avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
+  { id: "demo-diego", name: "Diego", initials: "D", bio: "Emprendimiento, tecnología y running.", intent: "Trabajar", interests: ["Startups", "Tecnología", "Running"], avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
+  { id: "demo-andrea", name: "Andrea", initials: "A", bio: "Diseño, música y conocer gente nueva.", intent: "Platicar", interests: ["Arte", "Música", "Viajes"], avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
   { id: "demo-carlos", name: "Carlos", initials: "C", bio: "Negocios, fitness y café.", intent: "Entrenar", interests: ["Negocios", "Running", "Café"], avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
-  { id: "demo-fer", name: "Fernanda", initials: "F", bio: "Libros, cine y nuevas experiencias.", intent: "Charlar", interests: ["Libros", "Arte", "Viajes"], avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
+  { id: "demo-fer", name: "Fernanda", initials: "F", bio: "Libros, cine y nuevas experiencias.", intent: "Platicar", interests: ["Libros", "Arte", "Viajes"], avatar: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=240&q=80", socialStatus: "available", simulated: true },
 ];
 
 const CLOUD_RING_GAP = 150;
@@ -146,14 +148,15 @@ function mapEmbedUrl(coords: { lat: number; lng: number } | null) {
   return `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(`${left},${bottom},${right},${top}`)}&layer=mapnik`;
 }
 
-function isProfileComplete(profile: { name: string; bio: string; avatar: string; interests: string[]; mood: string; howToFindMe: string }) {
+function isProfileComplete(profile: { name: string; bio: string; avatar: string; interests: string[]; mood: string; whereIAm: string; whatImWearing: string }) {
   return Boolean(
     profile.name.trim() &&
     profile.bio.trim() &&
     profile.avatar &&
     profile.interests.length > 0 &&
     profile.mood &&
-    profile.howToFindMe.trim()
+    profile.whereIAm.trim() &&
+    profile.whatImWearing.trim()
   );
 }
 
@@ -170,7 +173,8 @@ export default function Home() {
 
   const [name, setName] = useState("");
   const [bio, setBio] = useState("");
-  const [specificLocation, setSpecificLocation] = useState("");
+  const [whereIAm, setWhereIAm] = useState("");
+  const [whatImWearing, setWhatImWearing] = useState("");
   const [interests, setInterests] = useState<string[]>([]);
   const [mood, setMood] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
@@ -240,7 +244,7 @@ export default function Home() {
   }
 
   const radius = Number(process.env.NEXT_PUBLIC_NEARBY_RADIUS_METERS || 75);
-  const profileComplete = useMemo(() => isProfileComplete({ name, bio, avatar: avatarUrl, interests, mood, howToFindMe: specificLocation }), [name, bio, avatarUrl, interests, mood, specificLocation]);
+  const profileComplete = useMemo(() => isProfileComplete({ name, bio, avatar: avatarUrl, interests, mood, whereIAm, whatImWearing }), [name, bio, avatarUrl, interests, mood, whereIAm, whatImWearing]);
   const nearbyCount = useMemo(() => people.length, [people]);
   const pendingIncomingCount = useMemo(() => requests.filter(r => r.direction === "incoming" && r.status === "pending").length, [requests]);
   const availableNearbyCount = useMemo(() => people.filter(p => p.socialStatus === "available").length, [people]);
@@ -268,7 +272,7 @@ export default function Home() {
 
     const [{ data: profile }, { data: presence }] = await Promise.all([
       supabase.from("profiles").select("display_name,bio,avatar_url,interests,intent").eq("id", user.id).maybeSingle(),
-      supabase.from("presence").select("specific_location").eq("user_id", user.id).maybeSingle(),
+      supabase.from("presence").select("where_i_am,what_im_wearing,specific_location").eq("user_id", user.id).maybeSingle(),
     ]);
 
     if (profile) {
@@ -278,7 +282,10 @@ export default function Home() {
       setInterests(profile.interests || []);
       setMood(profile.intent || "");
     }
-    if (presence) setSpecificLocation(presence.specific_location || "");
+    if (presence) {
+      setWhereIAm(presence.where_i_am || presence.specific_location || "");
+      setWhatImWearing(presence.what_im_wearing || "");
+    }
   }
 
   async function enterCircle() {
@@ -586,7 +593,7 @@ export default function Home() {
       setActiveConversation(null);
       setConnectionNotice(null);
       setConnectionNoticeRequestId(null);
-      setName(""); setBio(""); setSpecificLocation(""); setInterests([]); setMood(""); setAvatarUrl(""); setAvatarBlob(null);
+      setName(""); setBio(""); setWhereIAm(""); setWhatImWearing(""); setInterests([]); setMood(""); setAvatarUrl(""); setAvatarBlob(null);
       setEmail(""); setPassword(""); setConfirmPassword("");
       setPushState("idle");
       setPushMessage("");
@@ -685,7 +692,7 @@ export default function Home() {
         name: p.display_name || "Alguien cerca",
         initials: (p.display_name || "C").slice(0, 1).toUpperCase(),
         bio: p.bio || "Disponible para socializar.",
-        intent: p.intent || "Charlar",
+        intent: p.intent || "Platicar",
         interests: p.interests || [],
         avatar: p.avatar_url || "",
         socialStatus: p.social_status === "busy" ? "busy" : "available",
@@ -742,8 +749,9 @@ export default function Home() {
         bio: r.bio || "Disponible para socializar.",
         avatar: r.avatar_url || "",
         interests: r.interests || [],
-        intent: r.intent || "Charlar",
-        howToFindMe: r.how_to_find_me || "",
+        intent: r.intent || "Platicar",
+        whereIAm: r.where_i_am || "",
+        whatImWearing: r.what_im_wearing || "",
         createdAt: r.created_at,
       }));
       setRequests(normalized);
@@ -768,8 +776,9 @@ export default function Home() {
         otherId: row.other_id,
         name: row.display_name || "Usuario Circle",
         avatar: row.avatar_url || "",
-        intent: row.intent || "Charlar",
-        howToFindMe: row.how_to_find_me || "",
+        intent: row.intent || "Platicar",
+        whereIAm: row.where_i_am || "",
+        whatImWearing: row.what_im_wearing || "",
         startedAt: row.started_at,
       } : null;
       setActiveConversation(conversation);
@@ -916,7 +925,8 @@ export default function Home() {
           name: request.name,
           avatar: request.avatar,
           intent: request.intent,
-          howToFindMe: request.howToFindMe,
+          whereIAm: request.whereIAm,
+          whatImWearing: request.whatImWearing,
           startedAt: new Date().toISOString(),
         };
         markConversationLocally(provisional);
@@ -1067,7 +1077,7 @@ export default function Home() {
       name: p.display_name || "Alguien cerca",
       initials: (p.display_name || "C").slice(0, 1).toUpperCase(),
       bio: p.bio || "Disponible para socializar.",
-      intent: p.intent || "Charlar",
+      intent: p.intent || "Platicar",
       interests: p.interests || [],
       avatar: p.avatar_url || "",
       socialStatus: p.social_status === "busy" ? "busy" : "available",
@@ -1108,7 +1118,9 @@ export default function Home() {
       const { error: presenceError } = await supabase.from("presence").upsert({
         user_id: user.id,
         location: `POINT(${location.lng} ${location.lat})`,
-        specific_location: specificLocation.trim() || null,
+        where_i_am: whereIAm.trim() || null,
+        what_im_wearing: whatImWearing.trim() || null,
+        specific_location: [whereIAm.trim(), whatImWearing.trim()].filter(Boolean).join(" · ") || null,
         is_available: true,
         last_seen: new Date().toISOString(),
       });
@@ -1128,8 +1140,8 @@ export default function Home() {
 
   async function saveProfile() {
     setProfileError("");
-    if (!name.trim() || !bio.trim() || !avatarUrl || !interests.length || !mood || !specificLocation.trim()) {
-      setProfileError("Completa foto, nombre, descripción, al menos un interés, mood y Cómo encontrarme.");
+    if (!name.trim() || !bio.trim() || !avatarUrl || !interests.length || !mood || !whereIAm.trim() || !whatImWearing.trim()) {
+      setProfileError("Completa foto, nombre, Sobre mí, al menos un interés, mood, Dónde me ubico y Qué estoy usando.");
       return;
     }
     if (!supabase) return setProfileError("Supabase no está conectado.");
@@ -1171,7 +1183,9 @@ export default function Home() {
       const { error: presenceError } = await supabase.from("presence").upsert({
         user_id: user.id,
         location: `POINT(${locationForPresence.lng} ${locationForPresence.lat})`,
-        specific_location: specificLocation.trim(),
+        where_i_am: whereIAm.trim(),
+        what_im_wearing: whatImWearing.trim(),
+        specific_location: `${whereIAm.trim()} · ${whatImWearing.trim()}`,
         is_available: true,
         last_seen: new Date().toISOString(),
       });
@@ -1649,7 +1663,9 @@ export default function Home() {
             {activeConversation && (
               <div className="conversation-banner">
                 <div className="conversation-icon"><MessageCircle size={19}/></div>
-                <div><span>Estás conversando con</span><strong>{activeConversation.name}</strong><small>{activeConversation.howToFindMe ? `Cómo encontrarle: ${activeConversation.howToFindMe}` : "Conversación activa"}</small></div>
+                <div><span>Estás conversando con</span><strong>{activeConversation.name}</strong><small>{activeConversation.whereIAm || activeConversation.whatImWearing
+                  ? [activeConversation.whereIAm && `Dónde: ${activeConversation.whereIAm}`, activeConversation.whatImWearing && `Usa: ${activeConversation.whatImWearing}`].filter(Boolean).join(" · ")
+                  : "Conversación activa"}</small></div>
                 <button type="button" onClick={endActiveConversation} disabled={conversationEnding || activeConversation.id <= 0}>{conversationEnding ? "Finalizando…" : activeConversation.id <= 0 ? "Sincronizando…" : "Plática concluida"}</button>
               </div>
             )}
@@ -1719,7 +1735,7 @@ export default function Home() {
             <h2>{selected.name}</h2><p>{selected.bio}</p>
             <div className={`availability-pill ${selected.socialStatus === "busy" ? "busy" : ""}`}><span className="availability-dot"/> {selected.socialStatus === "busy" ? "Ocupado en una conversación" : "Disponible cerca de ti"}</div>
             <div className="section-card"><span className="section-label">Intereses</span><div className="chips">{selected.interests.map(x => <span key={x}>{x}</span>)}</div></div>
-            <div className="permission-copy"><Hand size={22}/><div><strong>No mostramos dónde está exactamente.</strong><span>“Cómo encontrarme” permanece oculto hasta que exista consentimiento. Quien recibe una solicitud sí puede identificar primero a quien la envió.</span></div></div>
+            <div className="permission-copy"><Hand size={22}/><div><strong>No mostramos dónde está exactamente.</strong><span>“Dónde me ubico” y “Qué estoy usando” permanecen ocultos hasta que exista consentimiento. Quien recibe una solicitud sí puede identificar primero a quien la envió.</span></div></div>
             {requestNotice && <div className="auth-feedback error">{requestNotice}</div>}
             {selected.socialStatus === "busy" ? <button className="primary busy-disabled" disabled><MessageCircle size={19}/> Ocupado</button> : activeConversation ? <button className="primary busy-disabled" disabled><MessageCircle size={19}/> Estás ocupado</button> : <button className="primary" onClick={() => requestHello(selected)}><Hand size={19}/> Quiero saludarle</button>}
           </div>
@@ -1739,7 +1755,7 @@ export default function Home() {
             <p className="avatar-help">Toca la foto para cambiarla. Podrás encuadrarla antes de guardar.</p>
 
             <label>Nombre<input value={name} onChange={e => setName(e.target.value)} placeholder="Tu nombre"/></label>
-            <label>Tu descripción<textarea value={bio} onChange={e => setBio(e.target.value)} placeholder="Me gusta viajar, leer y conocer gente nueva."/></label>
+            <label>Sobre mí<textarea value={bio} onChange={e => setBio(e.target.value)} placeholder="Me gusta viajar, leer y conocer gente nueva."/></label>
 
             <div className="field-label">Mood</div>
             <div className="chips selectable mood-grid">{moodOptions.map(x => <button type="button" key={x} className={mood === x ? "selected" : ""} onClick={() => setMood(x)}>{x}</button>)}</div>
@@ -1747,8 +1763,9 @@ export default function Home() {
             <div className="field-label">Intereses <span className="optional">(elige hasta 5)</span></div>
             <div className="chips selectable">{interestOptions.map(x => <button type="button" key={x} className={interests.includes(x) ? "selected" : ""} onClick={() => setInterests(v => v.includes(x) ? v.filter(i => i !== x) : v.length < 5 ? [...v, x] : v)}>{x}</button>)}</div>
 
-            <label>Cómo encontrarme<input value={specificLocation} onChange={e => setSpecificLocation(e.target.value)} placeholder="Piso 7, al lado de la ventana, playera azul" required/></label>
-            <p className="privacy-hint"><ShieldCheck size={14}/> Este dato permanece oculto. Solo quien reciba una solicitud tuya podrá verlo; si tú recibes una solicitud, la otra persona solo lo verá después de que aceptes.</p>
+            <label>Dónde me ubico<input value={whereIAm} onChange={e => setWhereIAm(e.target.value)} placeholder="Ej. Biblioteca, tercer piso, al lado de la ventana" required/></label>
+            <label>Qué estoy usando<input value={whatImWearing} onChange={e => setWhatImWearing(e.target.value)} placeholder="Ej. Playera blanca, jeans azules" required/></label>
+            <p className="privacy-hint"><ShieldCheck size={14}/> Estos datos permanecen ocultos. Solo quien reciba una solicitud tuya podrá verlos; si tú recibes una solicitud, la otra persona solo los verá después de que aceptes.</p>
 
             {profileError && <div className="auth-feedback error">{profileError}</div>}
             <button className="primary" onClick={saveProfile} disabled={profileSaving}>{profileSaving ? "Guardando…" : pendingPerson ? "Guardar y enviar solicitud" : "Guardar perfil"}</button>
@@ -1766,7 +1783,7 @@ export default function Home() {
               <button type="button" className={requestTab === "incoming" ? "active" : ""} onClick={() => { setRequestTab("incoming"); setRequestNotice(""); }}>Recibidas <span>{incomingRequests.length}</span></button>
               <button type="button" className={requestTab === "outgoing" ? "active" : ""} onClick={() => { setRequestTab("outgoing"); setRequestNotice(""); }}>Enviadas <span>{outgoingRequests.length}</span></button>
             </div>
-            <p>{requestTab === "incoming" ? "Antes de aceptar puedes identificar a quien quiere acercarse. Tu “Cómo encontrarme” sigue oculto hasta que tú aceptes." : "Aquí puedes revisar tus saludos enviados y cancelar los que sigan pendientes."}</p>
+            <p>{requestTab === "incoming" ? "Antes de aceptar puedes identificar a quien quiere acercarse. Tus datos para encontrarte siguen ocultos hasta que tú aceptes." : "Aquí puedes revisar tus saludos enviados y cancelar los que sigan pendientes."}</p>
             {requestNotice && <div className="auth-feedback success">{requestNotice}</div>}
             {requestsLoading ? <div className="requests-empty">Cargando solicitudes…</div> : visibleRequests.length === 0 ? <div className="requests-empty"><Hand size={26}/><strong>{requestTab === "incoming" ? "Aún no tienes solicitudes recibidas" : "Aún no has enviado saludos"}</strong><span>{requestTab === "incoming" ? "Cuando alguien quiera saludarte aparecerá aquí." : "Los saludos que envíes aparecerán aquí."}</span></div> : (
               <div className="request-list">
@@ -1779,8 +1796,14 @@ export default function Home() {
                     </div>
                     <p className="request-bio">{request.bio}</p>
                     {!!request.interests.length && <div className="chips request-chips">{request.interests.slice(0,5).map(x => <span key={x}>{x}</span>)}</div>}
-                    {request.howToFindMe && (
-                      <div className="how-to-find-card"><MapPin size={19}/><div><span>Cómo encontrarme</span><strong>{request.howToFindMe}</strong></div></div>
+                    {(request.whereIAm || request.whatImWearing) && (
+                      <div className="how-to-find-card">
+                        <MapPin size={19}/>
+                        <div>
+                          {request.whereIAm && <><span>Dónde se ubica</span><strong>{request.whereIAm}</strong></>}
+                          {request.whatImWearing && <><span>Qué está usando</span><strong>{request.whatImWearing}</strong></>}
+                        </div>
+                      </div>
                     )}
                     {request.direction === "incoming" && request.status === "pending" && activeConversation && <div className="waiting-copy">Termina tu conversación actual antes de aceptar otra solicitud.</div>}
                     {request.direction === "incoming" && request.status === "pending" && !activeConversation && (
@@ -1795,7 +1818,7 @@ export default function Home() {
                         <button className="cancel-request" type="button" disabled={requestActionId === request.id} onClick={() => cancelRequest(request)}>{requestActionId === request.id ? "Cancelando…" : "Cancelar saludo"}</button>
                       </div>
                     )}
-                    {request.direction === "outgoing" && request.status === "accepted" && request.howToFindMe && <div className="accepted-copy"><Check size={16}/> Ya puedes acercarte a saludarle. Ambos aparecen como ocupados hasta finalizar la plática.</div>}
+                    {request.direction === "outgoing" && request.status === "accepted" && (request.whereIAm || request.whatImWearing) && <div className="accepted-copy"><Check size={16}/> Ya puedes acercarte a saludarle. Ambos aparecen como ocupados hasta finalizar la plática.</div>}
                   </article>
                 ))}
               </div>
@@ -1808,8 +1831,8 @@ export default function Home() {
             <div className="success-icon">✓</div>
             <span className="subtle">Solicitud lista</span>
             <h2>Solicitud enviada</h2>
-            <p>{pendingPerson?.simulated ? `Este perfil de muestra permite recorrer el flujo de Circle sin afectar a otro usuario.` : `Le avisamos a ${pendingPerson?.name || "la persona"}. Si acepta, Circle revelará su “Cómo encontrarme” para que puedas acercarte.`}</p>
-            <div className="section-card safety"><ShieldCheck size={22}/><div><strong>Consentimiento primero</strong><span>Tu GPS nunca se comparte. “Cómo encontrarme” solo se revela según las reglas de consentimiento de la solicitud.</span></div></div>
+            <p>{pendingPerson?.simulated ? `Este perfil de muestra permite recorrer el flujo de Circle sin afectar a otro usuario.` : `Le avisamos a ${pendingPerson?.name || "la persona"}. Si acepta, Circle revelará sus datos para encontrarle para que puedas acercarte.`}</p>
+            <div className="section-card safety"><ShieldCheck size={22}/><div><strong>Consentimiento primero</strong><span>Tu GPS nunca se comparte. “Dónde me ubico” y “Qué estoy usando” solo se revelan según las reglas de consentimiento de la solicitud.</span></div></div>
             <button className="primary" onClick={async () => { setPendingPerson(null); await searchNearby(); }}>Volver a personas cerca</button>
           </div>
         )}
@@ -1855,7 +1878,10 @@ export default function Home() {
             <p><strong>{connectionNotice.name}</strong> aceptó tu solicitud. Ya puedes acercarte a saludarle.</p>
             <div className="connection-location-card">
               <MapPin size={21}/>
-              <div><span>Cómo encontrarle</span><strong>{connectionNotice.howToFindMe || "La persona no agregó una referencia."}</strong></div>
+              <div>
+                <span>Dónde se ubica</span><strong>{connectionNotice.whereIAm || "Sin referencia."}</strong>
+                <span>Qué está usando</span><strong>{connectionNotice.whatImWearing || "Sin referencia."}</strong>
+              </div>
             </div>
             <button className="primary" onClick={() => { acknowledgeConnection(connectionNoticeRequestId); setConnectionNoticeRequestId(null); setConnectionNotice(null); setPendingPerson(null); setView("radar"); }}>Entendido</button>
           </div>
