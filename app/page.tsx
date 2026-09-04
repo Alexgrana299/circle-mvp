@@ -40,6 +40,7 @@ type AuthMode = "login" | "signup";
 type RequestTab = "incoming" | "outgoing";
 type LocationIssue = "permission-denied" | "unavailable" | "timeout" | "unsupported";
 type LocationAction = "search" | "update" | "save";
+type PushState = "idle" | "unsupported" | "needs-install" | "prompt" | "enabled" | "blocked" | "error";
 
 type CropOffset = { x: number; y: number };
 type ActiveConversation = {
@@ -198,6 +199,12 @@ export default function Home() {
   const [authError, setAuthError] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [pwaInstalled, setPwaInstalled] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<any>(null);
+  const [pwaHelpOpen, setPwaHelpOpen] = useState(false);
+  const [pushState, setPushState] = useState<PushState>("idle");
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushMessage, setPushMessage] = useState("");
 
   const [cropSource, setCropSource] = useState("");
   const [cropZoom, setCropZoom] = useState(1);
@@ -337,11 +344,138 @@ export default function Home() {
     }
   }
 
+  function isIOSDevice() {
+    if (typeof navigator === "undefined") return false;
+    return /iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+  }
+
+  function isStandalonePWA() {
+    if (typeof window === "undefined") return false;
+    const nav = navigator as Navigator & { standalone?: boolean };
+    return window.matchMedia("(display-mode: standalone)").matches || nav.standalone === true;
+  }
+
+  function urlBase64ToUint8Array(base64String: string) {
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const rawData = window.atob(base64);
+    return Uint8Array.from([...rawData].map(char => char.charCodeAt(0)));
+  }
+
+  async function installCircle() {
+    if (installPrompt) {
+      await installPrompt.prompt();
+      const choice = await installPrompt.userChoice;
+      if (choice?.outcome === "accepted") setPwaInstalled(true);
+      setInstallPrompt(null);
+      return;
+    }
+    setPwaHelpOpen(true);
+  }
+
+  async function enablePushNotifications() {
+    setPushMessage("");
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+      setPushState("unsupported");
+      setPushMessage("Este navegador no permite notificaciones web push.");
+      return;
+    }
+    if (isIOSDevice() && !isStandalonePWA()) {
+      setPushState("needs-install");
+      setPwaHelpOpen(true);
+      return;
+    }
+    const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+    if (!vapidKey) {
+      setPushState("error");
+      setPushMessage("Falta configurar la llave pública de notificaciones.");
+      return;
+    }
+    if (!supabase) return;
+
+    setPushBusy(true);
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        setPushState(permission === "denied" ? "blocked" : "prompt");
+        setPushMessage(permission === "denied" ? "Las notificaciones están bloqueadas para Circle. Actívalas desde Ajustes del teléfono." : "No se activaron las notificaciones.");
+        return;
+      }
+
+      const registration = await navigator.serviceWorker.ready;
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidKey),
+        });
+      }
+      const json = subscription.toJSON();
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData.session?.user || !json.endpoint || !json.keys?.p256dh || !json.keys?.auth) throw new Error("No pudimos asociar este dispositivo con tu cuenta.");
+
+      const { error } = await supabase.rpc("save_my_push_subscription", {
+        p_endpoint: json.endpoint,
+        p_p256dh: json.keys.p256dh,
+        p_auth: json.keys.auth,
+        p_user_agent: navigator.userAgent,
+      });
+      if (error) throw error;
+      setPushState("enabled");
+      setPushMessage("Notificaciones activadas.");
+    } catch (error: any) {
+      setPushState("error");
+      setPushMessage(error?.message || "No pudimos activar las notificaciones.");
+    } finally {
+      setPushBusy(false);
+    }
+  }
+
+  async function syncExistingPushSubscription() {
+    if (!supabase || !("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window) || Notification.permission !== "granted") return;
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      if (!subscription) return;
+      const json = subscription.toJSON();
+      if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) return;
+      await supabase.rpc("save_my_push_subscription", {
+        p_endpoint: json.endpoint,
+        p_p256dh: json.keys.p256dh,
+        p_auth: json.keys.auth,
+        p_user_agent: navigator.userAgent,
+      });
+    } catch {}
+  }
+
+  async function sendPushNotification(recipientId: string, kind: "request" | "accepted", requestId?: number) {
+    if (!supabase || !recipientId) return;
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      if (!token) return;
+      await fetch("/api/push/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ recipientId, kind, requestId }),
+      });
+    } catch {
+      // Push is a secondary channel; Realtime remains the in-app source of truth.
+    }
+  }
+
   async function signOut() {
     if (supabase) {
       if (activeConversation) await supabase.rpc("end_conversation", { p_conversation_id: activeConversation.id });
       const { data } = await supabase.auth.getSession();
       if (data.session?.user) await supabase.from("presence").update({ is_available: false }).eq("user_id", data.session.user.id);
+      try {
+        if ("serviceWorker" in navigator && "PushManager" in window) {
+          const registration = await navigator.serviceWorker.ready;
+          const subscription = await registration.pushManager.getSubscription();
+          if (subscription) await supabase.rpc("remove_my_push_subscription", { p_endpoint: subscription.endpoint });
+        }
+      } catch {}
       await supabase.auth.signOut();
     }
     setIsAuthenticated(false);
@@ -650,6 +784,7 @@ export default function Home() {
     if (!person.simulated && supabase) {
       const { error } = await supabase.rpc("send_social_request", { p_receiver_id: person.id });
       if (error) throw error;
+      void sendPushNotification(person.id, "request");
       await loadRequests(true);
     }
     setView("success");
@@ -666,6 +801,7 @@ export default function Home() {
     try {
       const { error } = await supabase.rpc("respond_social_request", { p_request_id: request.id, p_decision: decision });
       if (error) throw error;
+      if (decision === "accepted") void sendPushNotification(request.otherId, "accepted", request.id);
       setRequestNotice(decision === "accepted" ? `Aceptaste a ${request.name}. Ahora puede ver cómo encontrarte.` : `Rechazaste la solicitud de ${request.name}.`);
       await loadRequests(true);
       if (decision === "accepted") {
@@ -1254,6 +1390,51 @@ export default function Home() {
   }, [view, cloudLayout.width, cloudLayout.height, people.length]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    setPwaInstalled(isStandalonePWA());
+
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => undefined);
+    }
+
+    const beforeInstall = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as any);
+    };
+    const installed = () => {
+      setPwaInstalled(true);
+      setInstallPrompt(null);
+    };
+    window.addEventListener("beforeinstallprompt", beforeInstall);
+    window.addEventListener("appinstalled", installed);
+
+    if ("Notification" in window) {
+      if (Notification.permission === "granted") setPushState("enabled");
+      else if (Notification.permission === "denied") setPushState("blocked");
+      else setPushState(isIOSDevice() && !isStandalonePWA() ? "needs-install" : "prompt");
+    } else {
+      setPushState("unsupported");
+    }
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", beforeInstall);
+      window.removeEventListener("appinstalled", installed);
+    };
+  }, []);
+
+  useEffect(() => {
+    const nav = navigator as Navigator & { setAppBadge?: (count?: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
+    if (!pwaInstalled) return;
+    if (pendingIncomingCount > 0) nav.setAppBadge?.(pendingIncomingCount).catch(() => undefined);
+    else nav.clearAppBadge?.().catch(() => undefined);
+  }, [pendingIncomingCount, pwaInstalled]);
+
+  useEffect(() => {
+    if (!isAuthenticated || pushState !== "enabled") return;
+    void syncExistingPushSubscription();
+  }, [isAuthenticated, pushState]);
+
+  useEffect(() => {
     if (!locationIssue) return;
     const retryWhenVisible = () => {
       if (document.visibilityState === "visible") {
@@ -1327,6 +1508,19 @@ export default function Home() {
               <div><span className="subtle">Personas cerca de ti</span><h2>{nearbyCount} personas cerca</h2><small className="nearby-summary">{availableNearbyCount} disponibles{nearbyCount - availableNearbyCount > 0 ? ` · ${nearbyCount - availableNearbyCount} ocupadas` : ""}</small></div>
             </div>
             <div className="status-line">{status}</div>
+            {(!pwaInstalled || pushState !== "enabled") && (
+              <div className="pwa-setup-card">
+                <div className="pwa-setup-icon"><Bell size={19}/></div>
+                <div className="pwa-setup-copy">
+                  <strong>{!pwaInstalled && isIOSDevice() ? "Instala Circle en tu inicio" : pushState === "enabled" ? "Circle instalado" : "No te pierdas un saludo"}</strong>
+                  <span>{!pwaInstalled && isIOSDevice() ? "Instálala para usar Circle como app y recibir avisos con el teléfono bloqueado." : "Activa notificaciones para enterarte cuando alguien quiera saludarte o acepte tu solicitud."}</span>
+                  {pushMessage && <small>{pushMessage}</small>}
+                </div>
+                {!pwaInstalled && isIOSDevice()
+                  ? <button type="button" onClick={installCircle}>Cómo instalar</button>
+                  : pushState !== "enabled" && <button type="button" onClick={enablePushNotifications} disabled={pushBusy}>{pushBusy ? "Activando…" : "Activar"}</button>}
+              </div>
+            )}
             {activeConversation && (
               <div className="conversation-banner">
                 <div className="conversation-icon"><MessageCircle size={19}/></div>
@@ -1496,7 +1690,19 @@ export default function Home() {
         )}
       </section>
 
-      {locationIssue && (
+      {pwaHelpOpen && (
+          <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Instalar Circle">
+            <div className="connection-sheet pwa-install-sheet">
+              <div className="connection-success-icon"><Bell size={28}/></div>
+              <h2>Instala Circle</h2>
+              <p>{isIOSDevice() ? "En iPhone abre Circle en Safari, toca Compartir y selecciona Agregar a pantalla de inicio. Después abre Circle desde su nuevo icono." : "Usa la opción Instalar aplicación o Agregar a pantalla de inicio de tu navegador."}</p>
+              <div className="connection-location-card"><ShieldCheck size={20}/><div><span>Para notificaciones</span><strong>Una vez instalada, abre Circle desde el icono y toca “Activar” cuando te pidamos permiso.</strong></div></div>
+              <button className="primary" type="button" onClick={() => setPwaHelpOpen(false)}>Entendido</button>
+            </div>
+          </div>
+        )}
+
+        {locationIssue && (
         <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Permiso de ubicación requerido">
           <div className="connection-sheet">
             <div className="connection-success-icon"><MapPin size={32}/></div>

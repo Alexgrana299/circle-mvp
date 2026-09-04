@@ -100,3 +100,13 @@
 /* Native-feeling social canvas gestures: one-finger pan + two-finger pinch zoom. */
 .people-cloud-scroll:active{cursor:grabbing}
 .people-cloud-scroll button,.people-cloud-scroll img{-webkit-user-drag:none}
+
+/* PWA / Home Screen experience */
+.page-shell{padding-top:max(34px,env(safe-area-inset-top));padding-bottom:max(22px,env(safe-area-inset-bottom));padding-left:max(16px,env(safe-area-inset-left));padding-right:max(16px,env(safe-area-inset-right))}
+.pwa-setup-card{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;margin:9px 0 12px;padding:11px 12px;border:1px solid #dce8fb;border-radius:16px;background:linear-gradient(135deg,rgba(244,249,255,.96),rgba(250,252,255,.96));box-shadow:0 7px 20px rgba(30,75,145,.06)}
+.pwa-setup-icon{width:36px;height:36px;border-radius:12px;background:#e9f2ff;color:#2f74ff;display:grid;place-items:center}
+.pwa-setup-copy{min-width:0;display:flex;flex-direction:column;gap:2px}.pwa-setup-copy strong{font-size:11px;color:#25344e}.pwa-setup-copy span{font-size:9.5px;line-height:1.4;color:#748197}.pwa-setup-copy small{font-size:9px;color:#2c7a62;font-weight:750;margin-top:2px}
+.pwa-setup-card>button{border:0;border-radius:11px;background:#2f74ff;color:#fff;padding:9px 11px;font-size:10px;font-weight:850;cursor:pointer;white-space:nowrap}.pwa-setup-card>button:disabled{opacity:.6;cursor:wait}
+.pwa-install-sheet .connection-location-card{margin-top:12px}
+@media(max-width:420px){.pwa-setup-card{grid-template-columns:auto 1fr}.pwa-setup-card>button{grid-column:1/-1;width:100%;min-height:38px}}
+@media(display-mode:standalone){body{overscroll-behavior-y:none}.phone-card{min-height:calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px)}}
