@@ -1790,8 +1790,8 @@ export default function Home() {
             </button>
             <p className="avatar-help">Tu foto ayudará a otros usuarios a reconocerte fácilmente.</p>
 
-            <label>Nombre<input value={name} onChange={e => setName(e.target.value)} placeholder="Tu nombre"/></label>
-            <label>Sobre mí<textarea value={bio} onChange={e => setBio(e.target.value)} placeholder="Me gusta viajar, leer y conocer gente nueva."/></label>
+            <label>Nombre<input value={name} onChange={e => setName(e.target.value)} placeholder="Ej Aemando, Sofia"/></label>
+            <label>Sobre mí<textarea value={bio} onChange={e => setBio(e.target.value)} placeholder="Lo que compartas aquí ayudará a otros a romper el hielo contigo."/></label>
 
             <div className="field-label">Mood</div>
             <div className="chips selectable mood-grid">{moodOptions.map(x => <button type="button" key={x} className={mood === x ? "selected" : ""} onClick={() => setMood(x)}>{x}</button>)}</div>
