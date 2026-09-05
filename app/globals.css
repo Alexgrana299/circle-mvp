@@ -29,7 +29,8 @@
 .incoming-alert{width:100%;border:1px solid #d5e4ff;background:linear-gradient(135deg,#eef5ff,#f8fbff);border-radius:16px;padding:12px 13px;margin:10px 0 3px;display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;text-align:left;color:#2866dc;cursor:pointer}.incoming-alert div{display:flex;flex-direction:column;gap:2px}.incoming-alert strong{font-size:12px;color:#243854}.incoming-alert span{font-size:10px;color:#72829a}.incoming-alert-arrow{font-size:23px!important;color:#3a72d7!important;line-height:1}
 
 /* Social presence: available vs busy */
-.nearby-summary{display:block;margin-top:3px;color:#7b879a;font-size:10px;font-weight:700}
+.nearby-summary{display:flex;align-items:center;gap:6px;margin-top:3px;color:#7b879a;font-size:10px;font-weight:700}
+.nearby-available-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px rgba(11,168,142,.12);flex:0 0 auto}
 .person-bubble.busy img,.person-bubble.busy .avatar-fallback{box-shadow:0 0 0 4px #eee7ff,0 10px 24px rgba(100,67,183,.18);border-color:#fff}
 .person-bubble.busy .intent-tag{background:#f0eaff;color:#6b4ac4}
 .person-bubble.busy small{color:#7254bf;font-weight:900}
