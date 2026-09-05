@@ -91,56 +91,69 @@ function seededJitter(seed: number) {
   return (value - Math.floor(value)) * 2 - 1;
 }
 
-function makeCloudLayout(count: number) {
-  const polarSlots: Array<{ radius: number; angle: number }> = [];
-  let remaining = count;
-  let ring = 0;
+function densityScaleForCount(count: number) {
+  if (count <= 12) return 1;
+  if (count <= 24) return 0.92;
+  if (count <= 40) return 0.84;
+  if (count <= 60) return 0.76;
+  if (count <= 80) return 0.70;
+  return 0.64;
+}
 
-  while (remaining > 0) {
-    const baseRadius = CLOUD_FIRST_RING + ring * CLOUD_RING_GAP;
-    const capacity = Math.max(6, Math.floor((2 * Math.PI * baseRadius) / CLOUD_MIN_CHORD));
-    const take = Math.min(remaining, capacity);
-    const phase = ring * 0.63 + seededJitter(ring + 1) * 0.22;
-
-    for (let i = 0; i < take; i++) {
-      const sector = (2 * Math.PI) / take;
-      const angleJitter = seededJitter((ring + 1) * 100 + i) * sector * 0.16;
-      const radialJitter = seededJitter((ring + 1) * 1000 + i) * 20;
-      polarSlots.push({
-        radius: baseRadius + radialJitter,
-        angle: phase + i * sector + angleJitter,
-      });
-    }
-
-    remaining -= take;
-    ring += 1;
-  }
-
-  const maxRadius = polarSlots.length
-    ? Math.max(...polarSlots.map(slot => slot.radius))
-    : CLOUD_FIRST_RING;
-  const diameter = Math.max(700, (maxRadius + CLOUD_EDGE_PADDING) * 2);
-  const width = diameter;
-  const height = Math.max(660, diameter);
+function makeCloudLayout(count: number, radarRadius: number) {
+  const width = 700;
+  const height = 700;
   const centerX = width / 2;
   const centerY = height / 2;
 
-  return {
-    width,
-    height,
-    centerX,
-    centerY,
-    people: polarSlots.map(slot => ({
-      x: centerX + Math.cos(slot.angle) * slot.radius,
-      y: centerY + Math.sin(slot.angle) * slot.radius,
-    })),
-  };
+  // Dejamos un margen real dentro de la circunferencia para que ninguna
+  // burbuja quede visualmente montada sobre el límite de los 75 m.
+  const usableRadius = Math.max(60, radarRadius * 0.78);
+  const minCenterRadius = Math.min(54, usableRadius * 0.34);
+  const people: Array<{ x: number; y: number }> = [];
+
+  function candidate(seed: number) {
+    const angleUnit = (seededJitter(seed) + 1) / 2;
+    const radiusUnit = (seededJitter(seed + 17) + 1) / 2;
+    const angle = angleUnit * Math.PI * 2;
+
+    // sqrt distribuye uniformemente por área, no en anillos.
+    const radius = minCenterRadius + Math.sqrt(radiusUnit) * (usableRadius - minCenterRadius);
+    return {
+      x: centerX + Math.cos(angle) * radius,
+      y: centerY + Math.sin(angle) * radius,
+    };
+  }
+
+  // Best-candidate sampling: se ve orgánico/desordenado, pero evita
+  // aglomeraciones y patrones simétricos. Funciona bien hasta 100 personas.
+  for (let i = 0; i < count; i++) {
+    let best = candidate((i + 1) * 1009);
+    let bestNearest = -1;
+
+    const attempts = count > 60 ? 110 : 150;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const point = candidate((i + 1) * 1009 + attempt * 97);
+      const nearest = people.length
+        ? Math.min(...people.map(person => Math.hypot(point.x - person.x, point.y - person.y)))
+        : Infinity;
+
+      if (nearest > bestNearest) {
+        best = point;
+        bestNearest = nearest;
+      }
+    }
+
+    people.push(best);
+  }
+
+  return { width, height, centerX, centerY, people };
 }
 
 function mapEmbedUrl(coords: { lat: number; lng: number } | null) {
   if (!coords) return "";
-  const latSpan = 0.0032;
-  const lngSpan = 0.0042;
+  const latSpan = 0.00135;
+  const lngSpan = 0.00185;
   const left = coords.lng - lngSpan;
   const right = coords.lng + lngSpan;
   const bottom = coords.lat - latSpan;
@@ -223,6 +236,7 @@ export default function Home() {
   const notifiedAcceptedRequestIdsRef = useRef<Set<number>>(new Set());
   const peopleCanvasRef = useRef<HTMLDivElement | null>(null);
   const [canvasZoom, setCanvasZoom] = useState(1);
+  const [radarScanKey, setRadarScanKey] = useState(0);
   const canvasZoomRef = useRef(1);
   const canvasPointersRef = useRef(new Map<number, { x: number; y: number }>());
   const canvasGestureRef = useRef<{
@@ -252,7 +266,28 @@ export default function Home() {
   const incomingRequests = useMemo(() => requests.filter(r => r.direction === "incoming"), [requests]);
   const outgoingRequests = useMemo(() => requests.filter(r => r.direction === "outgoing"), [requests]);
   const visibleRequests = requestTab === "incoming" ? incomingRequests : outgoingRequests;
-  const cloudLayout = useMemo(() => makeCloudLayout(people.length), [people.length]);
+
+  const locationRadiusPx = useMemo(() => {
+    if (!coords) return 158;
+    const worldSize = 700;
+    const metersPerDegreeLat = 111_320;
+    const metersPerDegreeLng = 111_320 * Math.cos((coords.lat * Math.PI) / 180);
+    const totalLatMeters = 0.0027 * metersPerDegreeLat;
+    const totalLngMeters = 0.0037 * metersPerDegreeLng;
+    const pxPerMeterY = worldSize / totalLatMeters;
+    const pxPerMeterX = worldSize / Math.max(totalLngMeters, 1);
+    return 75 * ((pxPerMeterX + pxPerMeterY) / 2);
+  }, [coords?.lat]);
+
+  const cloudLayout = useMemo(
+    () => makeCloudLayout(people.length, locationRadiusPx),
+    [people.length, locationRadiusPx]
+  );
+  const peopleDensityScale = useMemo(() => densityScaleForCount(people.length), [people.length]);
+
+  function triggerRadarScan() {
+    setRadarScanKey(current => current + 1);
+  }
 
   function distanceMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
     const toRad = (v: number) => v * Math.PI / 180;
@@ -261,7 +296,7 @@ export default function Home() {
     const dLng = toRad(b.lng - a.lng);
     const lat1 = toRad(a.lat);
     const lat2 = toRad(b.lat);
-    const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    const h = Math.sin(dLat/2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng/2) ** 2;
     return 2 * R * Math.asin(Math.sqrt(h));
   }
 
@@ -426,7 +461,7 @@ export default function Home() {
     setPwaInstallDismissed(true);
     try {
       window.localStorage.setItem("circle:pwa-install-dismissed", "1");
-    } catch { }
+    } catch {}
   }
 
   async function enablePushNotifications() {
@@ -545,7 +580,7 @@ export default function Home() {
         p_auth: json.keys.auth,
         p_user_agent: navigator.userAgent,
       });
-    } catch { }
+    } catch {}
   }
 
   async function sendPushNotification(recipientId: string, kind: "request" | "accepted", requestId?: number) {
@@ -592,13 +627,13 @@ export default function Home() {
                 "timeout"
               ).catch(() => undefined);
             }
-          } catch { }
+          } catch {}
         })();
 
         await withTimeout(currentSupabase.auth.signOut(), 6000, "No pudimos cerrar la sesión en el servidor.");
       }
     } catch {
-      try { await currentSupabase?.auth.signOut({ scope: "local" as any }); } catch { }
+      try { await currentSupabase?.auth.signOut({ scope: "local" as any }); } catch {}
     } finally {
       setIsAuthenticated(false);
       setPeople(demoPeople);
@@ -691,6 +726,7 @@ export default function Home() {
         setPeople(demoPeople);
         setStatus("Personas disponibles cerca de ti.");
         setView("radar");
+        triggerRadarScan();
         return;
       }
 
@@ -718,6 +754,7 @@ export default function Home() {
       setPeople([...realPeople.slice(0, 5), ...demoPeople].slice(0, 10));
       setStatus("Personas disponibles actualizadas.");
       setView("radar");
+      triggerRadarScan();
     } catch (error: any) {
       setPeople(demoPeople);
       setStatus(error?.message || "Activa tu ubicación para ver personas reales cerca de ti.");
@@ -1105,6 +1142,7 @@ export default function Home() {
 
   async function updatePresenceAndNearby() {
     setProfileError("");
+    triggerRadarScan();
     if (!profileComplete) {
       openMyProfile("Completa tu perfil para activar tu presencia y actualizar las personas cercanas.");
       return;
@@ -1397,16 +1435,32 @@ export default function Home() {
     });
   }
 
+  function minimumRadarZoom() {
+    // Mantiene las burbujas físicamente dentro del círculo incluso en el
+    // nivel de zoom más abierto permitido para esa densidad.
+    const screenBubbleRadius = 43 * peopleDensityScale;
+    const worldMargin = Math.max(18, locationRadiusPx * 0.22);
+    return Math.max(0.72, screenBubbleRadius / worldMargin);
+  }
+
   function setComfortableCanvasZoom() {
     const el = peopleCanvasRef.current;
     if (!el) return;
-    const padding = 22;
-    const fitX = Math.max(0.28, (el.clientWidth - padding) / cloudLayout.width);
-    const fitY = Math.max(0.28, (el.clientHeight - padding) / cloudLayout.height);
-    const exactFit = Math.min(1, fitX, fitY);
-    // Entry view: show several people at once while keeping names readable.
-    const comfortableFloor = el.clientWidth <= 480 ? 0.72 : 0.78;
-    const nextZoom = Math.min(1, Math.max(exactFit, comfortableFloor));
+
+    // Con poca gente mostramos contexto. Conforme aumenta la densidad,
+    // "entramos" al radar para darle más superficie visual a las personas.
+    const densityBoost =
+      people.length <= 10 ? 1 :
+      people.length <= 20 ? 1.18 :
+      people.length <= 35 ? 1.42 :
+      people.length <= 50 ? 1.72 :
+      people.length <= 75 ? 2.08 :
+      2.42;
+
+    const baseDiameter = Math.min(el.clientWidth * 1.22, el.clientHeight * 0.78);
+    const baseZoom = baseDiameter / Math.max(locationRadiusPx * 2, 1);
+    const nextZoom = Math.min(4.6, Math.max(minimumRadarZoom(), baseZoom * densityBoost));
+
     canvasZoomRef.current = nextZoom;
     setCanvasZoom(nextZoom);
     centerPeopleCanvas();
@@ -1417,7 +1471,7 @@ export default function Home() {
     if (!el) return;
 
     const oldZoom = canvasZoomRef.current;
-    const nextZoom = Math.min(2.2, Math.max(0.35, Number(nextValue.toFixed(3))));
+    const nextZoom = Math.min(4.8, Math.max(minimumRadarZoom(), Number(nextValue.toFixed(3))));
     if (Math.abs(nextZoom - oldZoom) < 0.002) return;
 
     const localX = anchorX ?? el.clientWidth / 2;
@@ -1545,7 +1599,7 @@ export default function Home() {
     setPwaInstalled(standalone);
     try {
       setPwaInstallDismissed(window.localStorage.getItem("circle:pwa-install-dismissed") === "1");
-    } catch { }
+    } catch {}
 
     if (standalone) {
       const orientation = screen.orientation as ScreenOrientation & { lock?: (orientation: string) => Promise<void> };
@@ -1568,7 +1622,7 @@ export default function Home() {
     const installed = () => {
       setPwaInstalled(true);
       setPwaInstallDismissed(false);
-      try { window.localStorage.removeItem("circle:pwa-install-dismissed"); } catch { }
+      try { window.localStorage.removeItem("circle:pwa-install-dismissed"); } catch {}
       setInstallPrompt(null);
     };
     window.addEventListener("beforeinstallprompt", beforeInstall);
@@ -1622,10 +1676,10 @@ export default function Home() {
             {isAuthenticated && view !== "landing" && view !== "auth" && (
               <>
                 <button className="notification-button" onClick={async () => { await loadRequests(); setView("requests"); }} aria-label="Solicitudes" title="Solicitudes">
-                  <Bell size={18} />
+                  <Bell size={18}/>
                   {pendingIncomingCount > 0 && <span className="notification-badge">{pendingIncomingCount > 9 ? "9+" : pendingIncomingCount}</span>}
                 </button>
-                <button className="logout-button" onClick={signOut} aria-label="Cerrar sesión" title="Cerrar sesión"><LogOut size={17} /></button>
+                <button className="logout-button" onClick={signOut} aria-label="Cerrar sesión" title="Cerrar sesión"><LogOut size={17}/></button>
               </>
             )}
           </div>
@@ -1633,22 +1687,22 @@ export default function Home() {
 
         {view === "landing" && (
           <div className="landing content-pad">
-            <div className="eyebrow"><Sparkles size={16} /> Conoce a quien ya está aquí</div>
+            <div className="eyebrow"><Sparkles size={16}/> Conoce a quien ya está aquí</div>
             <h1>¿Quién está abierto a <span>hablar contigo</span> cerca?</h1>
             <p className="lead">Circle elimina la parte incómoda de iniciar una conversación: primero sabes quién sí quiere que te acerques.</p>
             <div className="mini-cloud" aria-label="Vista previa de personas cercanas">
-              {demoPeople.slice(0, 4).map((p, i) => <img key={p.id} src={p.avatar} alt="Perfil" className={`mini-avatar a${i + 1}`} />)}
+              {demoPeople.slice(0,4).map((p, i) => <img key={p.id} src={p.avatar} alt="Perfil" className={`mini-avatar a${i+1}`} />)}
               <div className="you-dot">Tú</div>
             </div>
-            <button className="primary hero-button" onClick={enterCircle}><Radio size={20} />{isAuthenticated ? "Entrar a Circle" : "Buscar gente para socializar"}</button>
-            <p className="microcopy"><MapPin size={14} /> Usamos tu ubicación para saber quién está en tu zona, nunca para mostrar tu posición exacta.</p>
+            <button className="primary hero-button" onClick={enterCircle}><Radio size={20}/>{isAuthenticated ? "Entrar a Circle" : "Buscar gente para socializar"}</button>
+            <p className="microcopy"><MapPin size={14}/> Usamos tu ubicación para saber quién está en tu zona, nunca para mostrar tu posición exacta.</p>
             {!hasSupabase && <div className="dev-note">Conecta Supabase para usar cuentas y perfiles reales.</div>}
           </div>
         )}
 
         {view === "auth" && (
           <div className="content-pad auth-screen">
-            <button className="back" onClick={() => setView("landing")}><ArrowLeft size={20} /> Volver</button>
+            <button className="back" onClick={() => setView("landing")}><ArrowLeft size={20}/> Volver</button>
             <span className="subtle">Tu cuenta Circle</span>
             <h2>{authMode === "login" ? "Bienvenido de vuelta" : "Crea tu cuenta"}</h2>
             <p>{authMode === "login" ? "Inicia sesión para ver quién está disponible cerca de ti." : "Solo necesitas correo y contraseña. Tu perfil social lo completarás después."}</p>
@@ -1657,30 +1711,20 @@ export default function Home() {
               <button type="button" className={authMode === "signup" ? "active" : ""} onClick={() => { setAuthMode("signup"); setAuthError(""); setAuthMessage(""); }}>Crear cuenta</button>
             </div>
             <form className="auth-form" onSubmit={handleAuthSubmit}>
-              <label>Correo electrónico<div className="input-with-icon"><Mail size={18} /><input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="tu@correo.com" /></div></label>
-              <label>Contraseña<div className="input-with-icon password-field"><input type={showPassword ? "text" : "password"} autoComplete={authMode === "login" ? "current-password" : "new-password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" /><button type="button" onClick={() => setShowPassword(v => !v)} aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button></div></label>
+              <label>Correo electrónico<div className="input-with-icon"><Mail size={18}/><input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="tu@correo.com" /></div></label>
+              <label>Contraseña<div className="input-with-icon password-field"><input type={showPassword ? "text" : "password"} autoComplete={authMode === "login" ? "current-password" : "new-password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" /><button type="button" onClick={() => setShowPassword(v => !v)} aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}>{showPassword ? <EyeOff size={18}/> : <Eye size={18}/>}</button></div></label>
               {authMode === "signup" && <label>Confirmar contraseña<div className="input-with-icon"><input type={showPassword ? "text" : "password"} autoComplete="new-password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Repite tu contraseña" /></div></label>}
               {authError && <div className="auth-feedback error">{authError}</div>}
               {authMessage && <div className="auth-feedback success">{authMessage}</div>}
               <button className="primary" type="submit" disabled={authLoading}>{authLoading ? "Procesando…" : authMode === "login" ? "Iniciar sesión" : "Crear cuenta"}</button>
             </form>
-            <p className="microcopy center"><ShieldCheck size={14} /> Tu correo se usa para tu cuenta; no se muestra públicamente en Circle.</p>
+            <p className="microcopy center"><ShieldCheck size={14}/> Tu correo se usa para tu cuenta; no se muestra públicamente en Circle.</p>
           </div>
         )}
 
         {view === "radar" && (
           <div className="radar-screen">
             <div className="people-cloud-frame radar-map-stage" aria-label="Personas disponibles cerca. La posición de las burbujas es ilustrativa.">
-              {coords && (
-                <iframe
-                  className="social-map-background"
-                  title="Mapa de referencia de tu zona"
-                  src={mapEmbedUrl(coords)}
-                  loading="lazy"
-                  tabIndex={-1}
-                  aria-hidden="true"
-                />
-              )}
               <div
                 className="people-cloud-scroll"
                 ref={peopleCanvasRef}
@@ -1693,15 +1737,60 @@ export default function Home() {
                 <div className="people-cloud-world" style={{ width: `max(100%, ${Math.round(cloudLayout.width * canvasZoom)}px)`, height: `max(100%, ${Math.round(cloudLayout.height * canvasZoom)}px)` }}>
                   <div className="people-cloud-scale-layer" style={{ width: `${cloudLayout.width * canvasZoom}px`, height: `${cloudLayout.height * canvasZoom}px` }}>
                     <div className="people-cloud-canvas" style={{ width: `${cloudLayout.width}px`, height: `${cloudLayout.height}px`, transform: `scale(${canvasZoom})` }}>
+                      {coords && (
+                        <>
+                          <iframe
+                            className="social-map-background social-map-world"
+                            title="Mapa de referencia de tu zona"
+                            src={mapEmbedUrl(coords)}
+                            loading="lazy"
+                            tabIndex={-1}
+                            aria-hidden="true"
+                          />
+                          <div className="map-gray-wash" aria-hidden="true" />
+                          <div
+                            className="my-location-radius"
+                            aria-hidden="true"
+                            style={{
+                              left: `${cloudLayout.centerX}px`,
+                              top: `${cloudLayout.centerY}px`,
+                              width: `${locationRadiusPx * 2}px`,
+                              height: `${locationRadiusPx * 2}px`,
+                            }}
+                          />
+                          {radarScanKey > 0 && (
+                            <div
+                              key={radarScanKey}
+                              className="map-radar-scan"
+                              aria-hidden="true"
+                              style={{
+                                left: `${cloudLayout.centerX}px`,
+                                top: `${cloudLayout.centerY}px`,
+                                width: `${locationRadiusPx * 2}px`,
+                                height: `${locationRadiusPx * 2}px`,
+                              }}
+                            >
+                              <span className="radar-sweep" />
+                            </div>
+                          )}
+                          <div
+                            className="my-location-dot"
+                            aria-label="Tu ubicación aproximada"
+                            style={{ left: `${cloudLayout.centerX}px`, top: `${cloudLayout.centerY}px` }}
+                          >
+                            <span />
+                          </div>
+                        </>
+                      )}
                       {people.map((p, i) => (
-                        <button key={p.id} className={`person-bubble ${p.socialStatus === "busy" ? "busy" : ""}`} style={{ left: `${cloudLayout.people[i].x}px`, top: `${cloudLayout.people[i].y}px` }} onClick={() => openPerson(p)}>
+                        <button key={p.id} className={`person-bubble ${p.socialStatus === "busy" ? "busy" : ""} ${people.length > 40 ? "dense" : ""} ${people.length > 70 ? "very-dense" : ""}`} style={{ left: `${cloudLayout.people[i].x}px`, top: `${cloudLayout.people[i].y}px`, transform: `translate(-50%, -50%) scale(${peopleDensityScale / canvasZoom})` }} onClick={() => openPerson(p)}>
                           <span className="intent-tag">{p.intent}</span>
-                          {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name} /> : <span className="avatar-fallback locked-avatar"><UserRound size={28} /></span>}
+                          {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name}/> : <span className="avatar-fallback locked-avatar"><UserRound size={28}/></span>}
                           <strong>{p.name}</strong><small>{p.socialStatus === "busy" ? "Ocupado" : "Disponible"}</small>
                         </button>
                       ))}
-                      <button className={`my-bubble ${activeConversation ? "busy" : ""}`} style={{ left: `${cloudLayout.centerX}px`, top: `${cloudLayout.centerY}px` }} onClick={() => openMyProfile()} aria-label="Abrir mi perfil">
-                        {avatarUrl ? <img src={avatarUrl} alt="Tu perfil" /> : <span className="my-avatar-empty"><UserRound size={30} /></span>}
+                      <button className={`my-bubble ${activeConversation ? "busy" : ""}`} style={{ left: `${cloudLayout.centerX}px`, top: `${cloudLayout.centerY}px`, transform: `translate(-50%, -50%) scale(${1 / canvasZoom})` }} onClick={() => openMyProfile()} aria-label="Abrir mi perfil">
+                        {avatarUrl ? <img src={avatarUrl} alt="Tu perfil"/> : <span className="my-avatar-empty"><UserRound size={30}/></span>}
                         <strong>Tú</strong>
                         <small>{profileComplete ? (activeConversation ? "Ocupado" : mood) : "Completar perfil"}</small>
                       </button>
@@ -1709,7 +1798,7 @@ export default function Home() {
                   </div>
                 </div>
               </div>
-              <div className="cloud-note">{Math.round(canvasZoom * 100)}% · pellizca para zoom · arrastra para explorar</div>
+              <div className="cloud-note">{people.length > 20 ? `${people.length} cerca · ` : ""}{Math.round(canvasZoom * 100)}% · pellizca para zoom · arrastra para explorar</div>
             </div>
 
             <div className="radar-floating-stack">
@@ -1722,7 +1811,7 @@ export default function Home() {
 
               {((!pwaInstalled && !pwaInstallDismissed) || (pwaInstalled && pushState !== "enabled")) && (
                 <div className="pwa-setup-card radar-overlay-card">
-                  <div className="pwa-setup-icon"><Bell size={19} /></div>
+                  <div className="pwa-setup-icon"><Bell size={19}/></div>
                   <div className="pwa-setup-copy">
                     <strong>{!pwaInstalled && isIOSDevice() ? "Instala Circle en tu inicio" : pushState === "enabled" ? "Circle instalado" : "No te pierdas un saludo"}</strong>
                     <span>{!pwaInstalled && isIOSDevice() ? "Instálala para usar Circle como app y recibe notificaciones en tu celular." : "Activa notificaciones para enterarte cuando alguien quiera saludarte o acepte tu solicitud."}</span>
@@ -1736,7 +1825,7 @@ export default function Home() {
 
               {activeConversation && (
                 <div className="conversation-banner radar-overlay-card">
-                  <div className="conversation-icon"><MessageCircle size={19} /></div>
+                  <div className="conversation-icon"><MessageCircle size={19}/></div>
                   <div><span>Estás conversando con</span><strong>{activeConversation.name}</strong><small>{activeConversation.whereIAm || activeConversation.whatImWearing
                     ? [activeConversation.whereIAm && `Dónde: ${activeConversation.whereIAm}`, activeConversation.whatImWearing && `Usa: ${activeConversation.whatImWearing}`].filter(Boolean).join(" · ")
                     : "Conversación activa"}</small></div>
@@ -1746,14 +1835,14 @@ export default function Home() {
 
               {pendingIncomingCount > 0 && (
                 <button className="incoming-alert radar-overlay-card" onClick={async () => { await loadRequests(); setView("requests"); }}>
-                  <Bell size={18} /><div><strong>{pendingIncomingCount === 1 ? "Alguien quiere saludarte" : `${pendingIncomingCount} personas quieren saludarte`}</strong><span>Toca para revisar la solicitud.</span></div><span className="incoming-alert-arrow">›</span>
+                  <Bell size={18}/><div><strong>{pendingIncomingCount === 1 ? "Alguien quiere saludarte" : `${pendingIncomingCount} personas quieren saludarte`}</strong><span>Toca para revisar la solicitud.</span></div><span className="incoming-alert-arrow">›</span>
                 </button>
               )}
             </div>
 
             <div className="radar-update-zone radar-update-floating">
               <button className="profile-update-button" type="button" onClick={updatePresenceAndNearby} disabled={profileUpdating || locating}>
-                <RefreshCw size={19} className={profileUpdating ? "spin" : ""} />
+                <RefreshCw size={19} className={profileUpdating ? "spin" : ""}/>
                 {profileUpdating ? "Actualizando…" : "Actualizar"}
               </button>
               <p>Actualiza tu ubicación, estado y las personas que aparecen en tu entorno.</p>
@@ -1763,35 +1852,35 @@ export default function Home() {
 
         {view === "profile" && selected && (
           <div className="content-pad profile-screen">
-            <button className="back" onClick={() => setView("radar")}><ArrowLeft size={20} /> Personas cerca</button>
+            <button className="back" onClick={() => setView("radar")}><ArrowLeft size={20}/> Personas cerca</button>
             <div className="profile-avatar-wrap">
-              {profileComplete && selected.avatar ? <img src={selected.avatar} alt={selected.name} /> : <div className="profile-photo-locked"><UserRound size={42} /><span>Completa tu perfil para ver fotos</span></div>}
+              {profileComplete && selected.avatar ? <img src={selected.avatar} alt={selected.name}/> : <div className="profile-photo-locked"><UserRound size={42}/><span>Completa tu perfil para ver fotos</span></div>}
               <span>{selected.intent}</span>
             </div>
             <h2>{selected.name}</h2><p>{selected.bio}</p>
-            <div className={`availability-pill ${selected.socialStatus === "busy" ? "busy" : ""}`}><span className="availability-dot" /> {selected.socialStatus === "busy" ? "Ocupado en una conversación" : "Disponible cerca de ti"}</div>
+            <div className={`availability-pill ${selected.socialStatus === "busy" ? "busy" : ""}`}><span className="availability-dot"/> {selected.socialStatus === "busy" ? "Ocupado en una conversación" : "Disponible cerca de ti"}</div>
             <div className="section-card"><span className="section-label">Intereses</span><div className="chips">{selected.interests.map(x => <span key={x}>{x}</span>)}</div></div>
-            <div className="permission-copy"><Hand size={22} /><div><strong>No mostramos dónde está exactamente.</strong><span>“Dónde me ubico” y “Qué estoy usando” permanecen ocultos hasta que exista consentimiento. Quien recibe una solicitud sí puede identificar primero a quien la envió.</span></div></div>
+            <div className="permission-copy"><Hand size={22}/><div><strong>No mostramos dónde está exactamente.</strong><span>“Dónde me ubico” y “Qué estoy usando” permanecen ocultos hasta que exista consentimiento. Quien recibe una solicitud sí puede identificar primero a quien la envió.</span></div></div>
             {requestNotice && <div className="auth-feedback error">{requestNotice}</div>}
-            {selected.socialStatus === "busy" ? <button className="primary busy-disabled" disabled><MessageCircle size={19} /> Ocupado</button> : activeConversation ? <button className="primary busy-disabled" disabled><MessageCircle size={19} /> Estás ocupado</button> : <button className="primary" onClick={() => requestHello(selected)}><Hand size={19} /> Quiero saludarle</button>}
+            {selected.socialStatus === "busy" ? <button className="primary busy-disabled" disabled><MessageCircle size={19}/> Ocupado</button> : activeConversation ? <button className="primary busy-disabled" disabled><MessageCircle size={19}/> Estás ocupado</button> : <button className="primary" onClick={() => requestHello(selected)}><Hand size={19}/> Quiero saludarle</button>}
           </div>
         )}
 
         {view === "myProfile" && (
           <div className="content-pad onboarding-screen my-profile-screen">
-            <button className="back" onClick={() => { setProfilePrompt(""); setPendingPerson(null); setView("radar"); }}><ArrowLeft size={20} /> Personas cerca</button>
+            <button className="back" onClick={() => { setProfilePrompt(""); setPendingPerson(null); setView("radar"); }}><ArrowLeft size={20}/> Personas cerca</button>
             <span className="subtle">Mi perfil</span><h2>{profileComplete ? "Tu perfil Circle" : "Completa tu perfil"}</h2>
-            {profilePrompt ? <div className="profile-prompt"><ShieldCheck size={18} /><span>{profilePrompt}</span></div> : <p>Esta es la información que las personas cercanas usan para decidir si quieren conocerte.</p>}
+            {profilePrompt ? <div className="profile-prompt"><ShieldCheck size={18}/><span>{profilePrompt}</span></div> : <p>Esta es la información que las personas cercanas usan para decidir si quieren conocerte.</p>}
 
             <input ref={fileInputRef} className="hidden-file-input" type="file" accept="image/*" onChange={e => { onPhotoSelected(e.target.files?.[0]); e.currentTarget.value = ""; }} />
             <button type="button" className={`avatar-picker ${avatarUrl ? "has-photo" : ""}`} onClick={choosePhoto}>
-              {avatarUrl ? <img src={avatarUrl} alt="Tu selfie" /> : <><Camera size={28} /><strong>Selfie</strong><span>Agregar foto desde tu galería</span></>}
-              {avatarUrl && <span className="avatar-edit-badge"><Camera size={16} /></span>}
+              {avatarUrl ? <img src={avatarUrl} alt="Tu selfie"/> : <><Camera size={28}/><strong>Selfie</strong><span>Agregar foto desde tu galería</span></>}
+              {avatarUrl && <span className="avatar-edit-badge"><Camera size={16}/></span>}
             </button>
             <p className="avatar-help">Tu foto ayudará a otros usuarios a reconocerte fácilmente.</p>
 
-            <label>Nombre<input value={name} onChange={e => setName(e.target.value)} placeholder="Ej Armando, Sofia" /></label>
-            <label>Sobre mí<textarea value={bio} onChange={e => setBio(e.target.value)} placeholder="Lo que compartas aquí ayudará a otros a romper el hielo contigo." /></label>
+            <label>Nombre<input value={name} onChange={e => setName(e.target.value)} placeholder="Ej Armando, Sofia"/></label>
+            <label>Sobre mí<textarea value={bio} onChange={e => setBio(e.target.value)} placeholder="Lo que compartas aquí ayudará a otros a romper el hielo contigo."/></label>
 
             <div className="field-label">Mood</div>
             <div className="chips selectable mood-grid">{moodOptions.map(x => <button type="button" key={x} className={mood === x ? "selected" : ""} onClick={() => setMood(x)}>{x}</button>)}</div>
@@ -1799,9 +1888,9 @@ export default function Home() {
             <div className="field-label">Intereses <span className="optional">(elige hasta 5)</span></div>
             <div className="chips selectable">{interestOptions.map(x => <button type="button" key={x} className={interests.includes(x) ? "selected" : ""} onClick={() => setInterests(v => v.includes(x) ? v.filter(i => i !== x) : v.length < 5 ? [...v, x] : v)}>{x}</button>)}</div>
 
-            <label>Dónde me ubico<input value={whereIAm} onChange={e => setWhereIAm(e.target.value)} placeholder="Ej. Biblioteca, tercer piso, al lado de la ventana" required /></label>
-            <label>Qué estoy usando<input value={whatImWearing} onChange={e => setWhatImWearing(e.target.value)} placeholder="Ej. Playera blanca, jeans azules" required /></label>
-            <p className="privacy-hint"><ShieldCheck size={14} /> Estos datos permanecen ocultos. Solo quien reciba una solicitud tuya podrá verlos; si tú recibes una solicitud, la otra persona solo los verá después de que aceptes.</p>
+            <label>Dónde me ubico<input value={whereIAm} onChange={e => setWhereIAm(e.target.value)} placeholder="Ej. Biblioteca, tercer piso, al lado de la ventana" required/></label>
+            <label>Qué estoy usando<input value={whatImWearing} onChange={e => setWhatImWearing(e.target.value)} placeholder="Ej. Playera blanca, jeans azules" required/></label>
+            <p className="privacy-hint"><ShieldCheck size={14}/> Estos datos permanecen ocultos. Solo quien reciba una solicitud tuya podrá verlos; si tú recibes una solicitud, la otra persona solo los verá después de que aceptes.</p>
 
             {profileError && <div className="auth-feedback error">{profileError}</div>}
             <button className="primary" onClick={saveProfile} disabled={profileSaving}>{profileSaving ? "Guardando…" : pendingPerson ? "Guardar y enviar solicitud" : "Guardar perfil"}</button>
@@ -1812,7 +1901,7 @@ export default function Home() {
 
         {view === "requests" && (
           <div className="content-pad requests-screen">
-            <button className="back" onClick={() => setView("radar")}><ArrowLeft size={20} /> Personas cerca</button>
+            <button className="back" onClick={() => setView("radar")}><ArrowLeft size={20}/> Personas cerca</button>
             <span className="subtle">Solicitudes</span>
             <h2>{requestTab === "incoming" && pendingIncomingCount ? `${pendingIncomingCount} ${pendingIncomingCount === 1 ? "persona quiere" : "personas quieren"} saludarte` : "Tus invitaciones"}</h2>
             <div className="request-tabs" role="tablist" aria-label="Tipo de solicitudes">
@@ -1821,20 +1910,20 @@ export default function Home() {
             </div>
             <p>{requestTab === "incoming" ? "Antes de aceptar puedes identificar a quien quiere acercarse. Tus datos para encontrarte siguen ocultos hasta que tú aceptes." : "Aquí puedes revisar tus saludos enviados y cancelar los que sigan pendientes."}</p>
             {requestNotice && <div className="auth-feedback success">{requestNotice}</div>}
-            {requestsLoading ? <div className="requests-empty">Cargando solicitudes…</div> : visibleRequests.length === 0 ? <div className="requests-empty"><Hand size={26} /><strong>{requestTab === "incoming" ? "Aún no tienes solicitudes recibidas" : "Aún no has enviado saludos"}</strong><span>{requestTab === "incoming" ? "Cuando alguien quiera saludarte aparecerá aquí." : "Los saludos que envíes aparecerán aquí."}</span></div> : (
+            {requestsLoading ? <div className="requests-empty">Cargando solicitudes…</div> : visibleRequests.length === 0 ? <div className="requests-empty"><Hand size={26}/><strong>{requestTab === "incoming" ? "Aún no tienes solicitudes recibidas" : "Aún no has enviado saludos"}</strong><span>{requestTab === "incoming" ? "Cuando alguien quiera saludarte aparecerá aquí." : "Los saludos que envíes aparecerán aquí."}</span></div> : (
               <div className="request-list">
                 {visibleRequests.map(request => (
                   <article className={`request-card ${request.direction === "outgoing" && request.status === "declined" ? "pending" : request.status}`} key={request.id}>
                     <div className="request-person">
-                      {request.avatar ? <img src={request.avatar} alt={request.name} /> : <span className="request-avatar-fallback"><UserRound size={25} /></span>}
+                      {request.avatar ? <img src={request.avatar} alt={request.name}/> : <span className="request-avatar-fallback"><UserRound size={25}/></span>}
                       <div><span className="request-direction">{request.direction === "incoming" ? "Quiere saludarte" : "Solicitud enviada"}</span><h3>{request.name}</h3><small>{request.intent}</small></div>
                       <span className={`request-status status-${request.direction === "outgoing" && request.status === "declined" ? "pending" : request.status}`}>{request.direction === "outgoing" && request.status === "declined" ? "Pendiente" : request.status === "pending" ? "Pendiente" : request.status === "accepted" ? "Aceptada" : request.status === "declined" ? "Rechazada" : "Cancelada"}</span>
                     </div>
                     <p className="request-bio">{request.bio}</p>
-                    {!!request.interests.length && <div className="chips request-chips">{request.interests.slice(0, 5).map(x => <span key={x}>{x}</span>)}</div>}
+                    {!!request.interests.length && <div className="chips request-chips">{request.interests.slice(0,5).map(x => <span key={x}>{x}</span>)}</div>}
                     {(request.whereIAm || request.whatImWearing) && (
                       <div className="how-to-find-card">
-                        <MapPin size={19} />
+                        <MapPin size={19}/>
                         <div>
                           {request.whereIAm && <><span>Dónde se ubica</span><strong>{request.whereIAm}</strong></>}
                           {request.whatImWearing && <><span>Qué está usando</span><strong>{request.whatImWearing}</strong></>}
@@ -1845,7 +1934,7 @@ export default function Home() {
                     {request.direction === "incoming" && request.status === "pending" && !activeConversation && (
                       <div className="request-actions">
                         <button className="decline-request" disabled={requestActionId === request.id} onClick={() => respondToRequest(request, "declined")}>Ahora no</button>
-                        <button className="accept-request" disabled={requestActionId === request.id} onClick={() => respondToRequest(request, "accepted")}><Check size={18} />{requestActionId === request.id ? "Procesando…" : "Puede acercarse"}</button>
+                        <button className="accept-request" disabled={requestActionId === request.id} onClick={() => respondToRequest(request, "accepted")}><Check size={18}/>{requestActionId === request.id ? "Procesando…" : "Puede acercarse"}</button>
                       </div>
                     )}
                     {request.direction === "outgoing" && (request.status === "pending" || request.status === "declined") && (
@@ -1856,7 +1945,7 @@ export default function Home() {
                         )}
                       </div>
                     )}
-                    {request.direction === "outgoing" && request.status === "accepted" && (request.whereIAm || request.whatImWearing) && <div className="accepted-copy"><Check size={16} /> Ya puedes acercarte a saludarle. Ambos aparecen como ocupados hasta finalizar la plática.</div>}
+                    {request.direction === "outgoing" && request.status === "accepted" && (request.whereIAm || request.whatImWearing) && <div className="accepted-copy"><Check size={16}/> Ya puedes acercarte a saludarle. Ambos aparecen como ocupados hasta finalizar la plática.</div>}
                   </article>
                 ))}
               </div>
@@ -1870,37 +1959,37 @@ export default function Home() {
             <span className="subtle">Solicitud lista</span>
             <h2>Solicitud enviada</h2>
             <p>{pendingPerson?.simulated ? `Este perfil de muestra permite recorrer el flujo de Circle sin afectar a otro usuario.` : `Le avisamos a ${pendingPerson?.name || "la persona"}. Si acepta, Circle revelará sus datos para encontrarle para que puedas acercarte.`}</p>
-            <div className="section-card safety"><ShieldCheck size={22} /><div><strong>Consentimiento primero</strong><span>Tu GPS nunca se comparte. “Dónde me ubico” y “Qué estoy usando” solo se revelan según las reglas de consentimiento de la solicitud.</span></div></div>
+            <div className="section-card safety"><ShieldCheck size={22}/><div><strong>Consentimiento primero</strong><span>Tu GPS nunca se comparte. “Dónde me ubico” y “Qué estoy usando” solo se revelan según las reglas de consentimiento de la solicitud.</span></div></div>
             <button className="primary" onClick={async () => { setPendingPerson(null); await searchNearby(); }}>Volver a personas cerca</button>
           </div>
         )}
       </section>
 
       {pwaHelpOpen && (
-        <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Instalar Circle">
-          <div className="connection-sheet pwa-install-sheet">
-            <div className="connection-success-icon"><Bell size={28} /></div>
-            <h2>Instala Circle</h2>
-            <p>{isIOSDevice() ? "En iPhone abre Circle en Safari, toca Compartir y selecciona Agregar a pantalla de inicio. Después abre Circle desde su nuevo icono." : "Usa la opción Instalar aplicación o Agregar a pantalla de inicio de tu navegador."}</p>
-            <div className="connection-location-card"><ShieldCheck size={20} /><div><span>Para notificaciones</span><strong>Una vez instalada, abre Circle desde el icono y toca “Activar” cuando te pidamos permiso.</strong></div></div>
-            <button className="primary" type="button" onClick={dismissPwaInstallHelp}>Entendido</button>
+          <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Instalar Circle">
+            <div className="connection-sheet pwa-install-sheet">
+              <div className="connection-success-icon"><Bell size={28}/></div>
+              <h2>Instala Circle</h2>
+              <p>{isIOSDevice() ? "En iPhone abre Circle en Safari, toca Compartir y selecciona Agregar a pantalla de inicio. Después abre Circle desde su nuevo icono." : "Usa la opción Instalar aplicación o Agregar a pantalla de inicio de tu navegador."}</p>
+              <div className="connection-location-card"><ShieldCheck size={20}/><div><span>Para notificaciones</span><strong>Una vez instalada, abre Circle desde el icono y toca “Activar” cuando te pidamos permiso.</strong></div></div>
+              <button className="primary" type="button" onClick={dismissPwaInstallHelp}>Entendido</button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {locationIssue && (
+        {locationIssue && (
         <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Permiso de ubicación requerido">
           <div className="connection-sheet">
-            <div className="connection-success-icon"><MapPin size={32} /></div>
+            <div className="connection-success-icon"><MapPin size={32}/></div>
             <span className="subtle">Ubicación requerida</span>
             <h2>{locationIssue === "permission-denied" ? "Permite tu ubicación" : locationIssue === "timeout" ? "No pudimos ubicarte" : locationIssue === "unsupported" ? "Ubicación no disponible" : "Activa tu ubicación"}</h2>
             <p>{locationIssue === "permission-denied" ? "Circle necesita permiso de ubicación para mostrarte personas reales que están cerca. Tu ubicación exacta nunca se muestra a otros usuarios." : locationIssue === "timeout" ? "El teléfono tardó demasiado en responder. Comprueba que la ubicación esté activa y vuelve a intentarlo." : locationIssue === "unsupported" ? "Este navegador no está dando acceso a geolocalización. Prueba con Safari en iPhone o Chrome en Android y permite ubicación para Circle." : "Comprueba que la ubicación del teléfono esté activada y que este sitio tenga permiso para usarla."}</p>
             <div className="connection-location-card">
-              <ShieldCheck size={21} />
+              <ShieldCheck size={21}/>
               <div><span>Cómo activarla</span><strong>{locationHelpText()}</strong></div>
             </div>
             <button className="primary" type="button" onClick={() => void retryLocationAccess()} disabled={locationRetrying}>
-              <RefreshCw size={18} className={locationRetrying ? "spin" : ""} />{locationRetrying ? "Comprobando…" : "Intentar de nuevo"}
+              <RefreshCw size={18} className={locationRetrying ? "spin" : ""}/>{locationRetrying ? "Comprobando…" : "Intentar de nuevo"}
             </button>
             <button className="secondary" type="button" onClick={() => setLocationIssue(null)}>Ahora no</button>
           </div>
@@ -1910,12 +1999,12 @@ export default function Home() {
       {connectionNotice && (
         <div className="connection-modal" role="dialog" aria-modal="true" aria-label="Conexión hecha">
           <div className="connection-sheet">
-            <div className="connection-success-icon"><Check size={34} /></div>
+            <div className="connection-success-icon"><Check size={34}/></div>
             <span className="subtle">Conexión confirmada</span>
             <h2>¡Conexión hecha!</h2>
             <p><strong>{connectionNotice.name}</strong> aceptó tu solicitud. Ya puedes acercarte a saludarle.</p>
             <div className="connection-location-card">
-              <MapPin size={21} />
+              <MapPin size={21}/>
               <div>
                 <span>Dónde se ubica</span><strong>{connectionNotice.whereIAm || "Sin referencia."}</strong>
                 <span>Qué está usando</span><strong>{connectionNotice.whatImWearing || "Sin referencia."}</strong>
@@ -1929,14 +2018,14 @@ export default function Home() {
       {cropSource && (
         <div className="crop-modal" role="dialog" aria-modal="true" aria-label="Encuadrar foto de perfil">
           <div className="crop-sheet">
-            <div className="crop-header"><div><span className="subtle">Foto de perfil</span><h3>Encuadra tu foto</h3></div><button type="button" onClick={() => { if (cropSource.startsWith("blob:")) URL.revokeObjectURL(cropSource); setCropSource(""); }} aria-label="Cerrar"><X size={21} /></button></div>
+            <div className="crop-header"><div><span className="subtle">Foto de perfil</span><h3>Encuadra tu foto</h3></div><button type="button" onClick={() => { if (cropSource.startsWith("blob:")) URL.revokeObjectURL(cropSource); setCropSource(""); }} aria-label="Cerrar"><X size={21}/></button></div>
             <p>Mueve la imagen con el dedo y usa el control para acercar o alejar.</p>
             <div className="crop-stage" onPointerDown={handleCropPointerDown} onPointerMove={handleCropPointerMove} onPointerUp={handleCropPointerUp} onPointerCancel={handleCropPointerUp}>
-              <img ref={cropImageRef} src={cropSource} alt="Foto por recortar" draggable={false} onLoad={e => { const img = e.currentTarget; setCropImageSize({ width: img.naturalWidth, height: img.naturalHeight }); setCropOffset({ x: 0, y: 0 }); }} style={cropImageSize.width ? (() => { const g = cropGeometry(); return { width: g.renderedWidth, height: g.renderedHeight, transform: `translate(calc(-50% + ${cropOffset.x}px), calc(-50% + ${cropOffset.y}px))` }; })() : undefined} />
+              <img ref={cropImageRef} src={cropSource} alt="Foto por recortar" draggable={false} onLoad={e => { const img = e.currentTarget; setCropImageSize({ width: img.naturalWidth, height: img.naturalHeight }); setCropOffset({ x: 0, y: 0 }); }} style={cropImageSize.width ? (() => { const g = cropGeometry(); return { width: g.renderedWidth, height: g.renderedHeight, transform: `translate(calc(-50% + ${cropOffset.x}px), calc(-50% + ${cropOffset.y}px))` }; })() : undefined}/>
               <div className="crop-mask" />
             </div>
-            <label className="zoom-control">Zoom<input type="range" min="1" max="3" step="0.01" value={cropZoom} onChange={e => { const next = Number(e.target.value); setCropZoom(next); setCropOffset(current => clampOffset(current, next)); }} /></label>
-            <div className="crop-actions"><button type="button" className="secondary" onClick={choosePhoto}>Elegir otra</button><button type="button" className="primary" onClick={acceptCrop}><Check size={18} /> Usar foto</button></div>
+            <label className="zoom-control">Zoom<input type="range" min="1" max="3" step="0.01" value={cropZoom} onChange={e => { const next = Number(e.target.value); setCropZoom(next); setCropOffset(current => clampOffset(current, next)); }}/></label>
+            <div className="crop-actions"><button type="button" className="secondary" onClick={choosePhoto}>Elegir otra</button><button type="button" className="primary" onClick={acceptCrop}><Check size={18}/> Usar foto</button></div>
           </div>
         </div>
       )}
