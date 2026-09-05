@@ -217,3 +217,7 @@ body{width:100%;max-width:100%;overflow-x:hidden}
    - the current user's marker is anchored to their real map coordinate
    - other profiles use deterministic fictitious map coordinates inside the radar
    - marker visuals counter-scale so their on-screen size stays stable while zooming */
+
+
+/* Radar geometry v2: equal metric scale on both map axes; markers are center-constrained
+   so their full visible circles remain inside the 37.5 m radius at supported zoom levels. */

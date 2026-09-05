@@ -104,7 +104,11 @@ type GeoPoint = { lat: number; lng: number };
 
 const MAP_WORLD_SIZE = 700;
 const MAP_LAT_SPAN = 0.00135;
-const MAP_LNG_SPAN = 0.00185;
+
+function mapLngSpan(lat: number) {
+  const cosLat = Math.max(0.2, Math.cos((lat * Math.PI) / 180));
+  return MAP_LAT_SPAN / cosLat;
+}
 
 function offsetMeters(origin: GeoPoint, eastMeters: number, northMeters: number): GeoPoint {
   const latOffset = northMeters / 111_320;
@@ -114,8 +118,9 @@ function offsetMeters(origin: GeoPoint, eastMeters: number, northMeters: number)
 }
 
 function geoToWorld(point: GeoPoint, center: GeoPoint) {
-  const left = center.lng - MAP_LNG_SPAN;
-  const right = center.lng + MAP_LNG_SPAN;
+  const lngSpan = mapLngSpan(center.lat);
+  const left = center.lng - lngSpan;
+  const right = center.lng + lngSpan;
   const bottom = center.lat - MAP_LAT_SPAN;
   const top = center.lat + MAP_LAT_SPAN;
 
@@ -127,8 +132,8 @@ function geoToWorld(point: GeoPoint, center: GeoPoint) {
 
 function makeFictionalPeopleGeo(count: number, center: GeoPoint, radiusMeters: number) {
   const points: GeoPoint[] = [];
-  const minimumRadius = Math.min(6, radiusMeters * 0.2);
-  const usableRadius = Math.max(minimumRadius + 1, radiusMeters - 3.5);
+  const minimumRadius = Math.min(5.5, radiusMeters * 0.18);
+  const usableRadius = Math.max(minimumRadius + 1, radiusMeters * 0.68);
 
   function candidate(seed: number) {
     const angleUnit = (seededJitter(seed) + 1) / 2;
@@ -206,8 +211,9 @@ function makeCloudLayout(count: number, center: GeoPoint | null, radiusMeters: n
 
 function mapEmbedUrl(coords: { lat: number; lng: number } | null) {
   if (!coords) return "";
-  const left = coords.lng - MAP_LNG_SPAN;
-  const right = coords.lng + MAP_LNG_SPAN;
+  const lngSpan = mapLngSpan(coords.lat);
+  const left = coords.lng - lngSpan;
+  const right = coords.lng + lngSpan;
   const bottom = coords.lat - MAP_LAT_SPAN;
   const top = coords.lat + MAP_LAT_SPAN;
   return `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(`${left},${bottom},${right},${top}`)}&layer=mapnik`;
@@ -322,13 +328,9 @@ export default function Home() {
 
   const locationRadiusPx = useMemo(() => {
     if (!coords) return 80;
-    const metersPerDegreeLat = 111_320;
-    const metersPerDegreeLng = 111_320 * Math.cos((coords.lat * Math.PI) / 180);
-    const totalLatMeters = (MAP_LAT_SPAN * 2) * metersPerDegreeLat;
-    const totalLngMeters = (MAP_LNG_SPAN * 2) * metersPerDegreeLng;
-    const pxPerMeterY = MAP_WORLD_SIZE / totalLatMeters;
-    const pxPerMeterX = MAP_WORLD_SIZE / Math.max(totalLngMeters, 1);
-    return radius * ((pxPerMeterX + pxPerMeterY) / 2);
+    const totalMapMeters = (MAP_LAT_SPAN * 2) * 111_320;
+    const pxPerMeter = MAP_WORLD_SIZE / totalMapMeters;
+    return radius * pxPerMeter;
   }, [coords?.lat, radius]);
 
   const cloudLayout = useMemo(
@@ -336,6 +338,10 @@ export default function Home() {
     [people.length, coords?.lat, coords?.lng, radius]
   );
   const peopleDensityScale = useMemo(() => densityScaleForCount(people.length), [people.length]);
+  const myWorldPoint = useMemo(
+    () => coords ? geoToWorld(coords, coords) : { x: cloudLayout.centerX, y: cloudLayout.centerY },
+    [coords?.lat, coords?.lng, cloudLayout.centerX, cloudLayout.centerY]
+  );
 
   function triggerRadarScan() {
     setRadarScanKey(current => current + 1);
@@ -1490,8 +1496,8 @@ export default function Home() {
   function minimumRadarZoom() {
     // Mantiene las burbujas físicamente dentro del círculo incluso en el
     // nivel de zoom más abierto permitido para esa densidad.
-    const screenBubbleRadius = 43 * peopleDensityScale;
-    const worldMargin = Math.max(18, locationRadiusPx * 0.22);
+    const screenBubbleRadius = 46 * peopleDensityScale;
+    const worldMargin = Math.max(22, locationRadiusPx * 0.30);
     return Math.max(0.72, screenBubbleRadius / worldMargin);
   }
 
@@ -1804,8 +1810,8 @@ export default function Home() {
                             className="my-location-radius"
                             aria-hidden="true"
                             style={{
-                              left: `${cloudLayout.centerX}px`,
-                              top: `${cloudLayout.centerY}px`,
+                              left: `${myWorldPoint.x}px`,
+                              top: `${myWorldPoint.y}px`,
                               width: `${locationRadiusPx * 2}px`,
                               height: `${locationRadiusPx * 2}px`,
                             }}
@@ -1816,8 +1822,8 @@ export default function Home() {
                               className="map-radar-scan"
                               aria-hidden="true"
                               style={{
-                                left: `${cloudLayout.centerX}px`,
-                                top: `${cloudLayout.centerY}px`,
+                                left: `${myWorldPoint.x}px`,
+                                top: `${myWorldPoint.y}px`,
                                 width: `${locationRadiusPx * 2}px`,
                                 height: `${locationRadiusPx * 2}px`,
                               }}
@@ -1828,7 +1834,7 @@ export default function Home() {
                           <div
                             className="my-location-dot"
                             aria-label="Tu ubicación aproximada"
-                            style={{ left: `${cloudLayout.centerX}px`, top: `${cloudLayout.centerY}px` }}
+                            style={{ left: `${myWorldPoint.x}px`, top: `${myWorldPoint.y}px` }}
                           >
                             <span />
                           </div>
@@ -1853,7 +1859,7 @@ export default function Home() {
                       ))}
                       <div
                         className="my-map-anchor"
-                        style={{ left: `${cloudLayout.centerX}px`, top: `${cloudLayout.centerY}px` }}
+                        style={{ left: `${myWorldPoint.x}px`, top: `${myWorldPoint.y}px` }}
                       >
                         <button
                           className={`my-bubble ${activeConversation ? "busy" : ""}`}
