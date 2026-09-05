@@ -1790,7 +1790,7 @@ export default function Home() {
             </button>
             <p className="avatar-help">Tu foto ayudará a otros usuarios a reconocerte fácilmente.</p>
 
-            <label>Nombre<input value={name} onChange={e => setName(e.target.value)} placeholder="Ej Aemando, Sofia"/></label>
+            <label>Nombre<input value={name} onChange={e => setName(e.target.value)} placeholder="Ej Armando, Sofia"/></label>
             <label>Sobre mí<textarea value={bio} onChange={e => setBio(e.target.value)} placeholder="Lo que compartas aquí ayudará a otros a romper el hielo contigo."/></label>
 
             <div className="field-label">Mood</div>
