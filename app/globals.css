@@ -210,8 +210,10 @@ body{width:100%;max-width:100%;overflow-x:hidden}
   pointer-events:auto;
 }
 
-/* The GPS point and the user's profile share the exact same world coordinate. */
-.my-map-anchor{
-  left:50%;
-  top:50%;
-}
+
+
+/* Geographic anchoring:
+   - the radar circle is 75 m in diameter (37.5 m radius)
+   - the current user's marker is anchored to their real map coordinate
+   - other profiles use deterministic fictitious map coordinates inside the radar
+   - marker visuals counter-scale so their on-screen size stays stable while zooming */

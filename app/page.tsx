@@ -100,42 +100,63 @@ function densityScaleForCount(count: number) {
   return 0.64;
 }
 
-function makeCloudLayout(count: number, radarRadius: number) {
-  const width = 700;
-  const height = 700;
-  const centerX = width / 2;
-  const centerY = height / 2;
+type GeoPoint = { lat: number; lng: number };
 
-  // Dejamos un margen real dentro de la circunferencia para que ninguna
-  // burbuja quede visualmente montada sobre el límite de los 75 m.
-  const usableRadius = Math.max(60, radarRadius * 0.78);
-  const minCenterRadius = Math.min(54, usableRadius * 0.34);
-  const people: Array<{ x: number; y: number }> = [];
+const MAP_WORLD_SIZE = 700;
+const MAP_LAT_SPAN = 0.00135;
+const MAP_LNG_SPAN = 0.00185;
+
+function offsetMeters(origin: GeoPoint, eastMeters: number, northMeters: number): GeoPoint {
+  const latOffset = northMeters / 111_320;
+  const lngScale = Math.max(1, 111_320 * Math.cos((origin.lat * Math.PI) / 180));
+  const lngOffset = eastMeters / lngScale;
+  return { lat: origin.lat + latOffset, lng: origin.lng + lngOffset };
+}
+
+function geoToWorld(point: GeoPoint, center: GeoPoint) {
+  const left = center.lng - MAP_LNG_SPAN;
+  const right = center.lng + MAP_LNG_SPAN;
+  const bottom = center.lat - MAP_LAT_SPAN;
+  const top = center.lat + MAP_LAT_SPAN;
+
+  return {
+    x: ((point.lng - left) / (right - left)) * MAP_WORLD_SIZE,
+    y: ((top - point.lat) / (top - bottom)) * MAP_WORLD_SIZE,
+  };
+}
+
+function makeFictionalPeopleGeo(count: number, center: GeoPoint, radiusMeters: number) {
+  const points: GeoPoint[] = [];
+  const minimumRadius = Math.min(6, radiusMeters * 0.2);
+  const usableRadius = Math.max(minimumRadius + 1, radiusMeters - 3.5);
 
   function candidate(seed: number) {
     const angleUnit = (seededJitter(seed) + 1) / 2;
     const radiusUnit = (seededJitter(seed + 17) + 1) / 2;
     const angle = angleUnit * Math.PI * 2;
-
-    // sqrt distribuye uniformemente por área, no en anillos.
-    const radius = minCenterRadius + Math.sqrt(radiusUnit) * (usableRadius - minCenterRadius);
-    return {
-      x: centerX + Math.cos(angle) * radius,
-      y: centerY + Math.sin(angle) * radius,
-    };
+    const distance = minimumRadius + Math.sqrt(radiusUnit) * (usableRadius - minimumRadius);
+    return offsetMeters(
+      center,
+      Math.cos(angle) * distance,
+      Math.sin(angle) * distance
+    );
   }
 
-  // Best-candidate sampling: se ve orgánico/desordenado, pero evita
-  // aglomeraciones y patrones simétricos. Funciona bien hasta 100 personas.
   for (let i = 0; i < count; i++) {
     let best = candidate((i + 1) * 1009);
     let bestNearest = -1;
+    const attempts = count > 60 ? 120 : 170;
 
-    const attempts = count > 60 ? 110 : 150;
     for (let attempt = 0; attempt < attempts; attempt++) {
       const point = candidate((i + 1) * 1009 + attempt * 97);
-      const nearest = people.length
-        ? Math.min(...people.map(person => Math.hypot(point.x - person.x, point.y - person.y)))
+      const pointWorld = geoToWorld(point, center);
+      const nearest = points.length
+        ? Math.min(
+            ...points.map(existing => {
+              const existingWorld = geoToWorld(existing, center);
+              return Math.hypot(pointWorld.x - existingWorld.x, pointWorld.y - existingWorld.y);
+            })
+          )
         : Infinity;
 
       if (nearest > bestNearest) {
@@ -144,20 +165,51 @@ function makeCloudLayout(count: number, radarRadius: number) {
       }
     }
 
-    people.push(best);
+    points.push(best);
   }
 
-  return { width, height, centerX, centerY, people };
+  return points;
+}
+
+function makeCloudLayout(count: number, center: GeoPoint | null, radiusMeters: number) {
+  const width = MAP_WORLD_SIZE;
+  const height = MAP_WORLD_SIZE;
+  const centerX = width / 2;
+  const centerY = height / 2;
+
+  if (!center) {
+    return {
+      width,
+      height,
+      centerX,
+      centerY,
+      people: Array.from({ length: count }, (_, i) => {
+        const angle = i * 2.399963229728653;
+        const r = 90 + (i % 5) * 18;
+        return {
+          x: centerX + Math.cos(angle) * r,
+          y: centerY + Math.sin(angle) * r,
+        };
+      }),
+    };
+  }
+
+  const fictionalGeo = makeFictionalPeopleGeo(count, center, radiusMeters);
+  return {
+    width,
+    height,
+    centerX,
+    centerY,
+    people: fictionalGeo.map(point => geoToWorld(point, center)),
+  };
 }
 
 function mapEmbedUrl(coords: { lat: number; lng: number } | null) {
   if (!coords) return "";
-  const latSpan = 0.00135;
-  const lngSpan = 0.00185;
-  const left = coords.lng - lngSpan;
-  const right = coords.lng + lngSpan;
-  const bottom = coords.lat - latSpan;
-  const top = coords.lat + latSpan;
+  const left = coords.lng - MAP_LNG_SPAN;
+  const right = coords.lng + MAP_LNG_SPAN;
+  const bottom = coords.lat - MAP_LAT_SPAN;
+  const top = coords.lat + MAP_LAT_SPAN;
   return `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(`${left},${bottom},${right},${top}`)}&layer=mapnik`;
 }
 
@@ -258,7 +310,8 @@ export default function Home() {
     notifiedAcceptedRequestIdsRef.current.add(requestId);
   }
 
-  const radius = Number(process.env.NEXT_PUBLIC_NEARBY_RADIUS_METERS || 75);
+  const radarDiameterMeters = 75;
+  const radius = radarDiameterMeters / 2;
   const profileComplete = useMemo(() => isProfileComplete({ name, bio, avatar: avatarUrl, interests, mood, whereIAm, whatImWearing }), [name, bio, avatarUrl, interests, mood, whereIAm, whatImWearing]);
   const nearbyCount = useMemo(() => people.length, [people]);
   const pendingIncomingCount = useMemo(() => requests.filter(r => r.direction === "incoming" && r.status === "pending").length, [requests]);
@@ -268,20 +321,19 @@ export default function Home() {
   const visibleRequests = requestTab === "incoming" ? incomingRequests : outgoingRequests;
 
   const locationRadiusPx = useMemo(() => {
-    if (!coords) return 158;
-    const worldSize = 700;
+    if (!coords) return 80;
     const metersPerDegreeLat = 111_320;
     const metersPerDegreeLng = 111_320 * Math.cos((coords.lat * Math.PI) / 180);
-    const totalLatMeters = 0.0027 * metersPerDegreeLat;
-    const totalLngMeters = 0.0037 * metersPerDegreeLng;
-    const pxPerMeterY = worldSize / totalLatMeters;
-    const pxPerMeterX = worldSize / Math.max(totalLngMeters, 1);
-    return 75 * ((pxPerMeterX + pxPerMeterY) / 2);
-  }, [coords?.lat]);
+    const totalLatMeters = (MAP_LAT_SPAN * 2) * metersPerDegreeLat;
+    const totalLngMeters = (MAP_LNG_SPAN * 2) * metersPerDegreeLng;
+    const pxPerMeterY = MAP_WORLD_SIZE / totalLatMeters;
+    const pxPerMeterX = MAP_WORLD_SIZE / Math.max(totalLngMeters, 1);
+    return radius * ((pxPerMeterX + pxPerMeterY) / 2);
+  }, [coords?.lat, radius]);
 
   const cloudLayout = useMemo(
-    () => makeCloudLayout(people.length, locationRadiusPx),
-    [people.length, locationRadiusPx]
+    () => makeCloudLayout(people.length, coords, radius),
+    [people.length, coords?.lat, coords?.lng, radius]
   );
   const peopleDensityScale = useMemo(() => densityScaleForCount(people.length), [people.length]);
 
@@ -1724,7 +1776,7 @@ export default function Home() {
 
         {view === "radar" && (
           <div className="radar-screen">
-            <div className="people-cloud-frame radar-map-stage" aria-label="Personas disponibles cerca. La posición de las burbujas es ilustrativa.">
+            <div className="people-cloud-frame radar-map-stage" aria-label="Personas disponibles dentro de un diámetro de 75 metros. Las posiciones de otras personas son ilustrativas por privacidad.">
               <div
                 className="people-cloud-scroll"
                 ref={peopleCanvasRef}
