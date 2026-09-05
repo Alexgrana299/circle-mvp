@@ -185,3 +185,33 @@ body{width:100%;max-width:100%;overflow-x:hidden}
 .person-bubble.very-dense .intent-tag{display:none}
 .person-bubble.very-dense strong{font-size:12px;margin-top:4px}
 .person-bubble.dense,.person-bubble.very-dense{transition:transform .16s ease}
+
+
+/* Map-style marker anchoring.
+   The anchor owns the coordinate in the radar world; the visual bubble can resize
+   independently without ever changing that coordinate. */
+.person-map-anchor,
+.my-map-anchor{
+  position:absolute;
+  width:0;
+  height:0;
+  z-index:6;
+  pointer-events:none;
+}
+
+.my-map-anchor{z-index:10}
+
+.person-map-anchor .person-bubble,
+.my-map-anchor .my-bubble{
+  position:absolute;
+  left:0!important;
+  top:0!important;
+  transform-origin:center center;
+  pointer-events:auto;
+}
+
+/* The GPS point and the user's profile share the exact same world coordinate. */
+.my-map-anchor{
+  left:50%;
+  top:50%;
+}

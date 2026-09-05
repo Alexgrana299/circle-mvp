@@ -1783,17 +1783,37 @@ export default function Home() {
                         </>
                       )}
                       {people.map((p, i) => (
-                        <button key={p.id} className={`person-bubble ${p.socialStatus === "busy" ? "busy" : ""} ${people.length > 40 ? "dense" : ""} ${people.length > 70 ? "very-dense" : ""}`} style={{ left: `${cloudLayout.people[i].x}px`, top: `${cloudLayout.people[i].y}px`, transform: `translate(-50%, -50%) scale(${peopleDensityScale / canvasZoom})` }} onClick={() => openPerson(p)}>
-                          <span className="intent-tag">{p.intent}</span>
-                          {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name}/> : <span className="avatar-fallback locked-avatar"><UserRound size={28}/></span>}
-                          <strong>{p.name}</strong><small>{p.socialStatus === "busy" ? "Ocupado" : "Disponible"}</small>
-                        </button>
+                        <div
+                          key={p.id}
+                          className="person-map-anchor"
+                          style={{ left: `${cloudLayout.people[i].x}px`, top: `${cloudLayout.people[i].y}px` }}
+                        >
+                          <button
+                            className={`person-bubble ${p.socialStatus === "busy" ? "busy" : ""} ${people.length > 40 ? "dense" : ""} ${people.length > 70 ? "very-dense" : ""}`}
+                            style={{ transform: `translate(-50%, -50%) scale(${peopleDensityScale / canvasZoom})` }}
+                            onClick={() => openPerson(p)}
+                          >
+                            <span className="intent-tag">{p.intent}</span>
+                            {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name}/> : <span className="avatar-fallback locked-avatar"><UserRound size={28}/></span>}
+                            <strong>{p.name}</strong><small>{p.socialStatus === "busy" ? "Ocupado" : "Disponible"}</small>
+                          </button>
+                        </div>
                       ))}
-                      <button className={`my-bubble ${activeConversation ? "busy" : ""}`} style={{ left: `${cloudLayout.centerX}px`, top: `${cloudLayout.centerY}px`, transform: `translate(-50%, -50%) scale(${1 / canvasZoom})` }} onClick={() => openMyProfile()} aria-label="Abrir mi perfil">
-                        {avatarUrl ? <img src={avatarUrl} alt="Tu perfil"/> : <span className="my-avatar-empty"><UserRound size={30}/></span>}
-                        <strong>Tú</strong>
-                        <small>{profileComplete ? (activeConversation ? "Ocupado" : mood) : "Completar perfil"}</small>
-                      </button>
+                      <div
+                        className="my-map-anchor"
+                        style={{ left: `${cloudLayout.centerX}px`, top: `${cloudLayout.centerY}px` }}
+                      >
+                        <button
+                          className={`my-bubble ${activeConversation ? "busy" : ""}`}
+                          style={{ transform: `translate(-50%, -50%) scale(${1 / canvasZoom})` }}
+                          onClick={() => openMyProfile()}
+                          aria-label="Abrir mi perfil"
+                        >
+                          {avatarUrl ? <img src={avatarUrl} alt="Tu perfil"/> : <span className="my-avatar-empty"><UserRound size={30}/></span>}
+                          <strong>Tú</strong>
+                          <small>{profileComplete ? (activeConversation ? "Ocupado" : mood) : "Completar perfil"}</small>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
