@@ -103,11 +103,50 @@ function densityScaleForCount(count: number) {
 type GeoPoint = { lat: number; lng: number };
 
 const MAP_WORLD_SIZE = 700;
-const MAP_LAT_SPAN = 0.00135;
+const MAP_TILE_SIZE = 256;
+const MAP_TILE_ZOOM = 18;
 
-function mapLngSpan(lat: number) {
-  const cosLat = Math.max(0.2, Math.cos((lat * Math.PI) / 180));
-  return MAP_LAT_SPAN / cosLat;
+function mercatorWorldPixel(point: GeoPoint, zoom = MAP_TILE_ZOOM) {
+  const worldSize = MAP_TILE_SIZE * 2 ** zoom;
+  const lat = Math.max(-85.05112878, Math.min(85.05112878, point.lat));
+  const sinLat = Math.sin((lat * Math.PI) / 180);
+
+  return {
+    x: ((point.lng + 180) / 360) * worldSize,
+    y: (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * worldSize,
+  };
+}
+
+function metersPerWorldPixel(lat: number, zoom = MAP_TILE_ZOOM) {
+  return (156543.03392804097 * Math.cos((lat * Math.PI) / 180)) / 2 ** zoom;
+}
+
+function makeMapTiles(center: GeoPoint) {
+  const centerPx = mercatorWorldPixel(center);
+  const half = MAP_WORLD_SIZE / 2;
+  const minTileX = Math.floor((centerPx.x - half) / MAP_TILE_SIZE) - 1;
+  const maxTileX = Math.floor((centerPx.x + half) / MAP_TILE_SIZE) + 1;
+  const minTileY = Math.floor((centerPx.y - half) / MAP_TILE_SIZE) - 1;
+  const maxTileY = Math.floor((centerPx.y + half) / MAP_TILE_SIZE) + 1;
+  const tileCount = 2 ** MAP_TILE_ZOOM;
+
+  const tiles: Array<{ key: string; x: number; y: number; url: string }> = [];
+
+  for (let tileY = minTileY; tileY <= maxTileY; tileY++) {
+    if (tileY < 0 || tileY >= tileCount) continue;
+
+    for (let tileX = minTileX; tileX <= maxTileX; tileX++) {
+      const wrappedX = ((tileX % tileCount) + tileCount) % tileCount;
+      tiles.push({
+        key: `${tileX}:${tileY}`,
+        x: tileX * MAP_TILE_SIZE - centerPx.x + half,
+        y: tileY * MAP_TILE_SIZE - centerPx.y + half,
+        url: `https://tile.openstreetmap.org/${MAP_TILE_ZOOM}/${wrappedX}/${tileY}.png`,
+      });
+    }
+  }
+
+  return tiles;
 }
 
 function offsetMeters(origin: GeoPoint, eastMeters: number, northMeters: number): GeoPoint {
@@ -117,66 +156,92 @@ function offsetMeters(origin: GeoPoint, eastMeters: number, northMeters: number)
   return { lat: origin.lat + latOffset, lng: origin.lng + lngOffset };
 }
 
+function distanceMetersBetweenGeo(a: GeoPoint, b: GeoPoint) {
+  const toRad = (value: number) => value * Math.PI / 180;
+  const earthRadius = 6_371_000;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  return 2 * earthRadius * Math.asin(Math.sqrt(h));
+}
+
 function geoToWorld(point: GeoPoint, center: GeoPoint) {
-  const lngSpan = mapLngSpan(center.lat);
-  const left = center.lng - lngSpan;
-  const right = center.lng + lngSpan;
-  const bottom = center.lat - MAP_LAT_SPAN;
-  const top = center.lat + MAP_LAT_SPAN;
+  const pointPx = mercatorWorldPixel(point);
+  const centerPx = mercatorWorldPixel(center);
 
   return {
-    x: ((point.lng - left) / (right - left)) * MAP_WORLD_SIZE,
-    y: ((top - point.lat) / (top - bottom)) * MAP_WORLD_SIZE,
+    x: MAP_WORLD_SIZE / 2 + (pointPx.x - centerPx.x),
+    y: MAP_WORLD_SIZE / 2 + (pointPx.y - centerPx.y),
   };
 }
 
-function makeFictionalPeopleGeo(count: number, center: GeoPoint, radiusMeters: number) {
-  const points: GeoPoint[] = [];
-  const minimumRadius = Math.min(5.5, radiusMeters * 0.18);
-  const usableRadius = Math.max(minimumRadius + 1, radiusMeters * 0.68);
+function stableStringSeed(value: string) {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return Math.abs(hash) || 1;
+}
 
-  function candidate(seed: number) {
+function makeFictionalPoint(
+  personId: string,
+  center: GeoPoint,
+  radiusMeters: number,
+  occupied: GeoPoint[]
+) {
+  const baseSeed = stableStringSeed(personId);
+
+  // UX safety zone:
+  // - no profile can sit on top of the current user
+  // - profile centers stay far enough from the 37.5 m edge that the full
+  //   visible avatar remains inside the radar at the normal entry zoom
+  const minimumRadius = radiusMeters * 0.40;
+  const usableRadius = radiusMeters * 0.64;
+
+  let best = offsetMeters(center, minimumRadius, 0);
+  let bestNearestMeters = -1;
+
+  for (let attempt = 0; attempt < 260; attempt++) {
+    const seed = baseSeed + attempt * 97;
     const angleUnit = (seededJitter(seed) + 1) / 2;
     const radiusUnit = (seededJitter(seed + 17) + 1) / 2;
     const angle = angleUnit * Math.PI * 2;
-    const distance = minimumRadius + Math.sqrt(radiusUnit) * (usableRadius - minimumRadius);
-    return offsetMeters(
+
+    // Uniform-ish area distribution inside an annulus, not a symmetric ring.
+    const distance = Math.sqrt(
+      minimumRadius * minimumRadius +
+      radiusUnit * (usableRadius * usableRadius - minimumRadius * minimumRadius)
+    );
+
+    const candidate = offsetMeters(
       center,
       Math.cos(angle) * distance,
       Math.sin(angle) * distance
     );
-  }
 
-  for (let i = 0; i < count; i++) {
-    let best = candidate((i + 1) * 1009);
-    let bestNearest = -1;
-    const attempts = count > 60 ? 120 : 170;
+    const nearestMeters = occupied.length
+      ? Math.min(...occupied.map(existing => distanceMetersBetweenGeo(candidate, existing)))
+      : Infinity;
 
-    for (let attempt = 0; attempt < attempts; attempt++) {
-      const point = candidate((i + 1) * 1009 + attempt * 97);
-      const pointWorld = geoToWorld(point, center);
-      const nearest = points.length
-        ? Math.min(
-            ...points.map(existing => {
-              const existingWorld = geoToWorld(existing, center);
-              return Math.hypot(pointWorld.x - existingWorld.x, pointWorld.y - existingWorld.y);
-            })
-          )
-        : Infinity;
-
-      if (nearest > bestNearest) {
-        best = point;
-        bestNearest = nearest;
-      }
+    if (nearestMeters > bestNearestMeters) {
+      best = candidate;
+      bestNearestMeters = nearestMeters;
     }
-
-    points.push(best);
   }
 
-  return points;
+  return best;
 }
 
-function makeCloudLayout(count: number, center: GeoPoint | null, radiusMeters: number) {
+function makeCloudLayout(
+  peopleIds: string[],
+  center: GeoPoint | null,
+  fictionalGeoById: Record<string, GeoPoint>
+) {
   const width = MAP_WORLD_SIZE;
   const height = MAP_WORLD_SIZE;
   const centerX = width / 2;
@@ -188,7 +253,7 @@ function makeCloudLayout(count: number, center: GeoPoint | null, radiusMeters: n
       height,
       centerX,
       centerY,
-      people: Array.from({ length: count }, (_, i) => {
+      people: peopleIds.map((_, i) => {
         const angle = i * 2.399963229728653;
         const r = 90 + (i % 5) * 18;
         return {
@@ -199,24 +264,16 @@ function makeCloudLayout(count: number, center: GeoPoint | null, radiusMeters: n
     };
   }
 
-  const fictionalGeo = makeFictionalPeopleGeo(count, center, radiusMeters);
   return {
     width,
     height,
     centerX,
     centerY,
-    people: fictionalGeo.map(point => geoToWorld(point, center)),
+    people: peopleIds.map(id => {
+      const point = fictionalGeoById[id];
+      return point ? geoToWorld(point, center) : { x: centerX, y: centerY };
+    }),
   };
-}
-
-function mapEmbedUrl(coords: { lat: number; lng: number } | null) {
-  if (!coords) return "";
-  const lngSpan = mapLngSpan(coords.lat);
-  const left = coords.lng - lngSpan;
-  const right = coords.lng + lngSpan;
-  const bottom = coords.lat - MAP_LAT_SPAN;
-  const top = coords.lat + MAP_LAT_SPAN;
-  return `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(`${left},${bottom},${right},${top}`)}&layer=mapnik`;
 }
 
 function isProfileComplete(profile: { name: string; bio: string; avatar: string; interests: string[]; mood: string; whereIAm: string; whatImWearing: string }) {
@@ -295,6 +352,8 @@ export default function Home() {
   const peopleCanvasRef = useRef<HTMLDivElement | null>(null);
   const [canvasZoom, setCanvasZoom] = useState(1);
   const [radarScanKey, setRadarScanKey] = useState(0);
+  const [fictionalGeoById, setFictionalGeoById] = useState<Record<string, GeoPoint>>({});
+  const viewerIdRef = useRef("");
   const canvasZoomRef = useRef(1);
   const canvasPointersRef = useRef(new Map<number, { x: number; y: number }>());
   const canvasGestureRef = useRef<{
@@ -316,8 +375,7 @@ export default function Home() {
     notifiedAcceptedRequestIdsRef.current.add(requestId);
   }
 
-  const radarDiameterMeters = 75;
-  const radius = radarDiameterMeters / 2;
+  const radius = Number(process.env.NEXT_PUBLIC_NEARBY_RADIUS_METERS || 37.5);
   const profileComplete = useMemo(() => isProfileComplete({ name, bio, avatar: avatarUrl, interests, mood, whereIAm, whatImWearing }), [name, bio, avatarUrl, interests, mood, whereIAm, whatImWearing]);
   const nearbyCount = useMemo(() => people.length, [people]);
   const pendingIncomingCount = useMemo(() => requests.filter(r => r.direction === "incoming" && r.status === "pending").length, [requests]);
@@ -328,16 +386,15 @@ export default function Home() {
 
   const locationRadiusPx = useMemo(() => {
     if (!coords) return 80;
-    const totalMapMeters = (MAP_LAT_SPAN * 2) * 111_320;
-    const pxPerMeter = MAP_WORLD_SIZE / totalMapMeters;
-    return radius * pxPerMeter;
+    return radius / Math.max(metersPerWorldPixel(coords.lat), 0.01);
   }, [coords?.lat, radius]);
 
   const cloudLayout = useMemo(
-    () => makeCloudLayout(people.length, coords, radius),
-    [people.length, coords?.lat, coords?.lng, radius]
+    () => makeCloudLayout(people.map(person => person.id), coords, fictionalGeoById),
+    [people, coords?.lat, coords?.lng, fictionalGeoById]
   );
   const peopleDensityScale = useMemo(() => densityScaleForCount(people.length), [people.length]);
+  const mapTiles = useMemo(() => coords ? makeMapTiles(coords) : [], [coords?.lat, coords?.lng]);
   const myWorldPoint = useMemo(
     () => coords ? geoToWorld(coords, coords) : { x: cloudLayout.centerX, y: cloudLayout.centerY },
     [coords?.lat, coords?.lng, cloudLayout.centerX, cloudLayout.centerY]
@@ -345,6 +402,71 @@ export default function Home() {
 
   function triggerRadarScan() {
     setRadarScanKey(current => current + 1);
+  }
+
+  function assignFictionalGeo(nextPeople: Person[], center: GeoPoint) {
+    const viewerKey = viewerIdRef.current || "local";
+    const storageKey = `circle:fictional-map:${viewerKey}`;
+
+    setFictionalGeoById(previousState => {
+      let persisted: Record<string, GeoPoint> = {};
+
+      try {
+        const raw = window.localStorage.getItem(storageKey);
+        if (raw) persisted = JSON.parse(raw);
+      } catch {}
+
+      // State wins over persisted storage. We intentionally keep entries for
+      // people who temporarily disappear so, if they return, they get the same spot.
+      const next: Record<string, GeoPoint> = {
+        ...persisted,
+        ...previousState,
+      };
+
+      const visibleExisting: GeoPoint[] = [];
+
+      // First validate only the currently visible people's saved coordinates.
+      // Tiny GPS jitter must NOT reorganize anybody.
+      for (const person of nextPeople) {
+        const existing = next[person.id];
+        if (!existing) continue;
+
+        const distanceFromCurrentCenter = distanceMetersBetweenGeo(center, existing);
+
+        // Only invalidate a coordinate after a genuine change of area.
+        // The assignment itself is <= 64% of the radius, so 86% leaves ample
+        // tolerance for normal GPS jitter while still protecting the radar edge.
+        if (
+          distanceFromCurrentCenter > radius * 0.86 ||
+          distanceFromCurrentCenter < radius * 0.28
+        ) {
+          delete next[person.id];
+        } else {
+          visibleExisting.push(existing);
+        }
+      }
+
+      // Only NEW / invalidated people get a new fictional map coordinate.
+      for (const person of nextPeople) {
+        if (next[person.id]) continue;
+
+        const point = makeFictionalPoint(
+          `${viewerKey}:${person.id}`,
+          center,
+          radius,
+          visibleExisting
+        );
+
+        next[person.id] = point;
+        visibleExisting.push(point);
+      }
+
+      try {
+        window.localStorage.setItem(storageKey, JSON.stringify(next));
+      } catch {}
+
+      return next;
+    });
   }
 
   function distanceMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
@@ -363,6 +485,7 @@ export default function Home() {
     const { data: sessionData } = await supabase.auth.getSession();
     const user = sessionData.session?.user;
     if (!user) return;
+    viewerIdRef.current = user.id;
 
     const [{ data: profile }, { data: presence }] = await Promise.all([
       supabase.from("profiles").select("display_name,bio,avatar_url,interests,intent").eq("id", user.id).maybeSingle(),
@@ -694,6 +817,8 @@ export default function Home() {
       try { await currentSupabase?.auth.signOut({ scope: "local" as any }); } catch {}
     } finally {
       setIsAuthenticated(false);
+      viewerIdRef.current = "";
+      setFictionalGeoById({});
       setPeople(demoPeople);
       setSelected(null);
       setRequests([]);
@@ -777,11 +902,12 @@ export default function Home() {
     setStatus("Buscando personas cerca de ti…");
 
     try {
-      const location = await currentLocation("search", { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 });
+      const location = await currentLocation("search", { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
       setCoords(location);
 
       if (!supabase) {
         setPeople(demoPeople);
+        assignFictionalGeo(demoPeople, location);
         setStatus("Personas disponibles cerca de ti.");
         setView("radar");
         triggerRadarScan();
@@ -791,25 +917,35 @@ export default function Home() {
       await supabase.rpc("update_my_presence_location", { user_lat: location.lat, user_lng: location.lng });
       lastPresenceCoordsRef.current = location;
 
-      const { data, error } = await supabase.rpc("nearby_profiles", {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const myUserId = sessionData.session?.user.id;
+
+      const { data, error } = await supabase.rpc("nearby_profiles_precise", {
         user_lat: location.lat,
         user_lng: location.lng,
         radius_meters: radius,
       });
+      if (error) throw error;
 
-      const realPeople: Person[] = !error && data?.length ? data.map((p: any) => ({
-        id: p.id,
-        name: p.display_name || "Alguien cerca",
-        initials: (p.display_name || "C").slice(0, 1).toUpperCase(),
-        bio: p.bio || "Disponible para socializar.",
-        intent: p.intent || "Socializar",
-        interests: p.interests || [],
-        avatar: p.avatar_url || "",
-        socialStatus: p.social_status === "busy" ? "busy" : "available",
-        simulated: false,
-      })) : [];
+      const realPeople: Person[] = data?.length ? data
+        .filter((p: any) => p.id !== myUserId)
+        .map((p: any) => ({
+          id: p.id,
+          name: p.display_name || "Alguien cerca",
+          initials: (p.display_name || "C").slice(0, 1).toUpperCase(),
+          bio: p.bio || "Disponible para socializar.",
+          intent: p.intent || "Socializar",
+          interests: p.interests || [],
+          avatar: p.avatar_url || "",
+          socialStatus: p.social_status === "busy" ? "busy" : "available",
+          simulated: false,
+        })) : [];
 
-      setPeople([...realPeople.slice(0, 5), ...demoPeople].slice(0, 10));
+      // Los demos rellenan únicamente cuando todavía no hay suficientes usuarios reales.
+      const demoFill = demoPeople.slice(0, Math.max(0, 5 - realPeople.length));
+      const nextPeople = [...realPeople, ...demoFill].slice(0, 100);
+      setPeople(nextPeople);
+      assignFictionalGeo(nextPeople, location);
       setStatus("Personas disponibles actualizadas.");
       setView("radar");
       triggerRadarScan();
@@ -1174,7 +1310,10 @@ export default function Home() {
 
   async function refreshNearbyAt(location: { lat: number; lng: number }, silent = false) {
     if (!supabase) return;
-    const { data, error } = await supabase.rpc("nearby_profiles", {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const myUserId = sessionData.session?.user.id;
+
+    const { data, error } = await supabase.rpc("nearby_profiles_precise", {
       user_lat: location.lat,
       user_lng: location.lng,
       radius_meters: radius,
@@ -1183,18 +1322,23 @@ export default function Home() {
       if (!silent) setStatus(error.message || "No pudimos actualizar las personas cercanas.");
       return;
     }
-    const realPeople: Person[] = data?.length ? data.map((p: any) => ({
-      id: p.id,
-      name: p.display_name || "Alguien cerca",
-      initials: (p.display_name || "C").slice(0, 1).toUpperCase(),
-      bio: p.bio || "Disponible para socializar.",
-      intent: p.intent || "Socializar",
-      interests: p.interests || [],
-      avatar: p.avatar_url || "",
-      socialStatus: p.social_status === "busy" ? "busy" : "available",
-      simulated: false,
-    })) : [];
-    setPeople([...realPeople.slice(0, 5), ...demoPeople].slice(0, 10));
+    const realPeople: Person[] = data?.length ? data
+      .filter((p: any) => p.id !== myUserId)
+      .map((p: any) => ({
+        id: p.id,
+        name: p.display_name || "Alguien cerca",
+        initials: (p.display_name || "C").slice(0, 1).toUpperCase(),
+        bio: p.bio || "Disponible para socializar.",
+        intent: p.intent || "Socializar",
+        interests: p.interests || [],
+        avatar: p.avatar_url || "",
+        socialStatus: p.social_status === "busy" ? "busy" : "available",
+        simulated: false,
+      })) : [];
+    const demoFill = demoPeople.slice(0, Math.max(0, 5 - realPeople.length));
+    const nextPeople = [...realPeople, ...demoFill].slice(0, 100);
+    setPeople(nextPeople);
+    assignFictionalGeo(nextPeople, location);
     if (!silent) setStatus(`${realPeople.length ? `${realPeople.length} ${realPeople.length === 1 ? "persona real cerca" : "personas reales cerca"} · ` : ""}Actualizado ahora.`);
   }
 
@@ -1221,7 +1365,7 @@ export default function Home() {
       const user = sessionData.session?.user;
       if (!user) throw new Error("Tu sesión expiró. Inicia sesión nuevamente.");
 
-      const location = await currentLocation("update", { enableHighAccuracy: true, timeout: 8000, maximumAge: 15000 });
+      const location = await currentLocation("update", { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
 
       // “Actualizar” refresca el mood/estatus y la presencia, sin modificar el resto del perfil.
       const { error: moodError } = await supabase.from("profiles").update({ intent: mood }).eq("id", user.id);
@@ -1288,7 +1432,7 @@ export default function Home() {
 
       let locationForPresence = coords;
       if (!locationForPresence) {
-        locationForPresence = await currentLocation("save", { enableHighAccuracy: true, timeout: 8000, maximumAge: 15000 });
+        locationForPresence = await currentLocation("save", { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
         setCoords(locationForPresence);
       }
 
@@ -1459,10 +1603,13 @@ export default function Home() {
         const nextCoords = { lat: next.latitude, lng: next.longitude };
         const previous = lastPresenceCoordsRef.current || coords;
 
-        if (previous && distanceMeters(previous, nextCoords) < 25) return;
+        // The blue/user marker always follows the freshest coordinate supplied by the phone.
+        setCoords(nextCoords);
+
+        // Avoid unnecessary DB writes from tiny GPS jitter, without freezing the visual marker.
+        if (previous && distanceMeters(previous, nextCoords) < 3) return;
 
         lastPresenceCoordsRef.current = nextCoords;
-        setCoords(nextCoords);
 
         await client.rpc("update_my_presence_location", {
           user_lat: nextCoords.lat,
@@ -1476,7 +1623,7 @@ export default function Home() {
       (error) => {
         if (error.code === error.PERMISSION_DENIED) registerLocationIssue(error, "update");
       },
-      { enableHighAccuracy: true, maximumAge: 20000, timeout: 10000 }
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
@@ -1496,8 +1643,8 @@ export default function Home() {
   function minimumRadarZoom() {
     // Mantiene las burbujas físicamente dentro del círculo incluso en el
     // nivel de zoom más abierto permitido para esa densidad.
-    const screenBubbleRadius = 46 * peopleDensityScale;
-    const worldMargin = Math.max(22, locationRadiusPx * 0.30);
+    const screenBubbleRadius = 48 * peopleDensityScale;
+    const worldMargin = Math.max(24, locationRadiusPx * 0.36);
     return Math.max(0.72, screenBubbleRadius / worldMargin);
   }
 
@@ -1797,14 +1944,23 @@ export default function Home() {
                     <div className="people-cloud-canvas" style={{ width: `${cloudLayout.width}px`, height: `${cloudLayout.height}px`, transform: `scale(${canvasZoom})` }}>
                       {coords && (
                         <>
-                          <iframe
-                            className="social-map-background social-map-world"
-                            title="Mapa de referencia de tu zona"
-                            src={mapEmbedUrl(coords)}
-                            loading="lazy"
-                            tabIndex={-1}
-                            aria-hidden="true"
-                          />
+                          <div className="social-map-background social-map-world" aria-hidden="true">
+                            {mapTiles.map(tile => (
+                              <img
+                                key={tile.key}
+                                className="osm-map-tile"
+                                src={tile.url}
+                                alt=""
+                                draggable={false}
+                                style={{
+                                  left: `${tile.x}px`,
+                                  top: `${tile.y}px`,
+                                  width: `${MAP_TILE_SIZE}px`,
+                                  height: `${MAP_TILE_SIZE}px`,
+                                }}
+                              />
+                            ))}
+                          </div>
                           <div className="map-gray-wash" aria-hidden="true" />
                           <div
                             className="my-location-radius"
@@ -1831,13 +1987,6 @@ export default function Home() {
                               <span className="radar-sweep" />
                             </div>
                           )}
-                          <div
-                            className="my-location-dot"
-                            aria-label="Tu ubicación aproximada"
-                            style={{ left: `${myWorldPoint.x}px`, top: `${myWorldPoint.y}px` }}
-                          >
-                            <span />
-                          </div>
                         </>
                       )}
                       {people.map((p, i) => (
@@ -1846,37 +1995,46 @@ export default function Home() {
                           className="person-map-anchor"
                           style={{ left: `${cloudLayout.people[i].x}px`, top: `${cloudLayout.people[i].y}px` }}
                         >
-                          <button
-                            className={`person-bubble ${p.socialStatus === "busy" ? "busy" : ""} ${people.length > 40 ? "dense" : ""} ${people.length > 70 ? "very-dense" : ""}`}
-                            style={{ transform: `translate(-50%, -50%) scale(${peopleDensityScale / canvasZoom})` }}
-                            onClick={() => openPerson(p)}
+                          <div
+                            className="map-marker-counter-scale"
+                            style={{ transform: `scale(${peopleDensityScale / canvasZoom})` }}
                           >
-                            <span className="intent-tag">{p.intent}</span>
-                            {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name}/> : <span className="avatar-fallback locked-avatar"><UserRound size={28}/></span>}
-                            <strong>{p.name}</strong><small>{p.socialStatus === "busy" ? "Ocupado" : "Disponible"}</small>
-                          </button>
+                            <button
+                              className={`person-bubble ${p.socialStatus === "busy" ? "busy" : ""} ${people.length > 40 ? "dense" : ""} ${people.length > 70 ? "very-dense" : ""}`}
+                              onClick={() => openPerson(p)}
+                            >
+                              <span className="intent-tag">{p.intent}</span>
+                              {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name}/> : <span className="avatar-fallback locked-avatar"><UserRound size={28}/></span>}
+                              <strong>{p.name}</strong><small>{p.socialStatus === "busy" ? "Ocupado" : "Disponible"}</small>
+                            </button>
+                          </div>
                         </div>
                       ))}
                       <div
                         className="my-map-anchor"
                         style={{ left: `${myWorldPoint.x}px`, top: `${myWorldPoint.y}px` }}
                       >
-                        <button
-                          className={`my-bubble ${activeConversation ? "busy" : ""}`}
-                          style={{ transform: `translate(-50%, -50%) scale(${1 / canvasZoom})` }}
-                          onClick={() => openMyProfile()}
-                          aria-label="Abrir mi perfil"
+                        <div
+                          className="map-marker-counter-scale"
+                          style={{ transform: `scale(${1 / canvasZoom})` }}
                         >
-                          {avatarUrl ? <img src={avatarUrl} alt="Tu perfil"/> : <span className="my-avatar-empty"><UserRound size={30}/></span>}
-                          <strong>Tú</strong>
-                          <small>{profileComplete ? (activeConversation ? "Ocupado" : mood) : "Completar perfil"}</small>
-                        </button>
+                          <button
+                            className={`my-bubble ${activeConversation ? "busy" : ""}`}
+                            onClick={() => openMyProfile()}
+                            aria-label="Abrir mi perfil"
+                          >
+                            {avatarUrl ? <img src={avatarUrl} alt="Tu perfil"/> : <span className="my-avatar-empty"><UserRound size={30}/></span>}
+                            <strong>Tú</strong>
+                            <small>{profileComplete ? (activeConversation ? "Ocupado" : mood) : "Completar perfil"}</small>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
               </div>
               <div className="cloud-note">{people.length > 20 ? `${people.length} cerca · ` : ""}{Math.round(canvasZoom * 100)}% · pellizca para zoom · arrastra para explorar</div>
+              <div className="osm-attribution">© OpenStreetMap</div>
             </div>
 
             <div className="radar-floating-stack">

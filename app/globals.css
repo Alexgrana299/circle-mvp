@@ -221,3 +221,106 @@ body{width:100%;max-width:100%;overflow-x:hidden}
 
 /* Radar geometry v2: equal metric scale on both map axes; markers are center-constrained
    so their full visible circles remain inside the 37.5 m radius at supported zoom levels. */
+
+
+/* Exact map-marker anchoring.
+   The zero-size anchor is the geographic coordinate. Scaling happens in a child layer
+   whose origin is exactly (0,0), so marker centers never drift during pinch zoom. */
+.person-map-anchor,
+.my-map-anchor{
+  transform:none!important;
+}
+
+.map-marker-counter-scale{
+  position:absolute;
+  left:0;
+  top:0;
+  width:0;
+  height:0;
+  transform-origin:0 0;
+  pointer-events:none;
+}
+
+.map-marker-counter-scale .person-bubble,
+.map-marker-counter-scale .my-bubble{
+  position:absolute!important;
+  left:0!important;
+  top:0!important;
+  transform:translate(-50%,-50%)!important;
+  transform-origin:center center!important;
+  pointer-events:auto;
+}
+
+
+/* Exact OpenStreetMap tile plane.
+   Tiles, the 37.5 m radius, the current-user coordinate and fictitious
+   profile coordinates all share one Web Mercator coordinate system. */
+.social-map-world{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  overflow:hidden;
+  background:#eef1f4;
+  z-index:0;
+  pointer-events:none;
+}
+
+.osm-map-tile{
+  position:absolute;
+  max-width:none;
+  user-select:none;
+  pointer-events:none;
+  filter:grayscale(1) saturate(0) contrast(.88) brightness(1.06);
+  opacity:.42;
+}
+
+.osm-attribution{
+  position:absolute;
+  z-index:20;
+  right:7px;
+  bottom:5px;
+  padding:2px 5px;
+  border-radius:6px;
+  background:rgba(255,255,255,.64);
+  color:#8b94a4;
+  font-size:7px;
+  line-height:1;
+  pointer-events:none;
+  backdrop-filter:blur(5px);
+}
+
+/* The geographic anchor is zero-sized and never scales independently.
+   Only the marker artwork counter-scales, so its center cannot drift. */
+.person-map-anchor,
+.my-map-anchor{
+  position:absolute;
+  width:0;
+  height:0;
+  transform:none!important;
+  pointer-events:none;
+}
+
+.map-marker-counter-scale{
+  position:absolute;
+  left:0;
+  top:0;
+  width:0;
+  height:0;
+  transform-origin:0 0;
+  pointer-events:none;
+}
+
+.map-marker-counter-scale .person-bubble,
+.map-marker-counter-scale .my-bubble{
+  position:absolute!important;
+  left:0!important;
+  top:0!important;
+  transform:translate(-50%,-50%)!important;
+  transform-origin:center center!important;
+  pointer-events:auto;
+}
+
+
+/* Own profile is the location marker. Avoid a second visual circle underneath it. */
+.my-location-dot{display:none!important}
