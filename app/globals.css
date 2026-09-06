@@ -164,3 +164,19 @@ body{width:100%;max-width:100%;overflow-x:hidden}
   .page-shell.radar-page-shell{height:100dvh;min-height:100dvh;padding:0!important;overflow:hidden}
   .page-shell.radar-page-shell .phone-card.radar-mode{height:100dvh;min-height:100dvh;max-height:100dvh}
 }
+
+/* Optional context message before sending a greeting */
+.hello-message-box{margin:0 0 14px;text-align:left;border:1px solid #e1e8f3;border-radius:17px;background:#fbfcff;padding:13px 14px}
+.hello-message-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:9px}
+.hello-message-heading>div{display:flex;flex-direction:column;gap:2px}
+.hello-message-heading strong{font-size:12px;color:#26344d}
+.hello-message-heading span{font-size:10px;color:#7d899d;line-height:1.35}
+.hello-message-heading small{font-size:9px;color:#8b96a8;font-weight:800;white-space:nowrap;margin-top:2px}
+.hello-message-box textarea{width:100%;min-height:76px;max-height:120px;resize:none;border:1px solid #dfe6f1;border-radius:13px;background:#fff;color:var(--navy);padding:11px 12px;outline:none;font-size:16px;line-height:1.4}
+.hello-message-box textarea:focus{border-color:#9fbfff;box-shadow:0 0 0 3px #edf3ff}
+.hello-message-box textarea::placeholder{color:#9aa5b6}
+
+/* Context shown to the receiver inside incoming requests */
+.request-message-card{display:flex;flex-direction:column;gap:4px;margin:11px 0 12px;padding:12px 13px;border:1px solid #dce8ff;border-radius:14px;background:#f5f8ff;text-align:left}
+.request-message-card span{font-size:9px;text-transform:uppercase;letter-spacing:.07em;font-weight:900;color:#6683b4}
+.request-message-card strong{font-size:12px;line-height:1.5;color:#25344e;font-weight:750;white-space:pre-wrap;overflow-wrap:anywhere}

@@ -34,7 +34,7 @@ export async function POST(request: Request) {
 
   // Poka-yoke anti-spam: a client cannot use this endpoint as an arbitrary push relay.
   // The database must prove that the social action really exists.
-  let relationQuery = admin.from("social_requests").select("id,status");
+  let relationQuery = admin.from("social_requests").select("id,status,message");
   if (requestId > 0) relationQuery = relationQuery.eq("id", requestId);
   if (kind === "request") {
     relationQuery = relationQuery.eq("sender_id", actor.id).eq("receiver_id", recipientId).eq("status", "pending");
@@ -50,7 +50,7 @@ export async function POST(request: Request) {
     ? `${actorName} quiere saludarte`
     : `${actorName} aceptó tu saludo`;
   const body = kind === "request"
-    ? "Toca para ver la solicitud."
+    ? (relation.message?.trim() || "Toca para ver la solicitud.")
     : "Toca para ver la conexión.";
 
   webpush.setVapidDetails(vapidSubject, vapidPublic!, vapidPrivate!);

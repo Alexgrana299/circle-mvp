@@ -66,6 +66,7 @@ type SocialRequest = {
   intent: string;
   whereIAm: string;
   whatImWearing: string;
+  message: string;
   createdAt: string;
 };
 
@@ -184,6 +185,7 @@ export default function Home() {
   const [profileError, setProfileError] = useState("");
   const [profilePrompt, setProfilePrompt] = useState("");
   const [pendingPerson, setPendingPerson] = useState<Person | null>(null);
+  const [helloMessage, setHelloMessage] = useState("");
   const [requests, setRequests] = useState<SocialRequest[]>([]);
   const [requestsLoading, setRequestsLoading] = useState(false);
   const [requestActionId, setRequestActionId] = useState<number | null>(null);
@@ -632,6 +634,7 @@ export default function Home() {
       setActiveConversation(null);
       setConnectionNotice(null);
       setConnectionNoticeRequestId(null);
+      setHelloMessage("");
       setName(""); setBio(""); setWhereIAm(""); setWhatImWearing(""); setInterests([]); setMood(""); setAvatarUrl(""); setAvatarBlob(null);
       setEmail(""); setPassword(""); setConfirmPassword("");
       setPushState("idle");
@@ -752,6 +755,7 @@ export default function Home() {
 
   function openPerson(person: Person) {
     setRequestNotice("");
+    setHelloMessage("");
     setSelected(person);
     setView("profile");
   }
@@ -791,6 +795,7 @@ export default function Home() {
         intent: r.intent || "Socializar",
         whereIAm: r.where_i_am || "",
         whatImWearing: r.what_im_wearing || "",
+        message: r.message || "",
         createdAt: r.created_at,
       }));
       setRequests(normalized);
@@ -939,11 +944,15 @@ export default function Home() {
       if (alreadyPending) throw new Error("Ya habías enviado un saludo a esta persona. Puedes esperar su respuesta o cancelarlo en Solicitudes → Enviadas.");
     }
     if (!person.simulated && supabase) {
-      const { error } = await supabase.rpc("send_social_request", { p_receiver_id: person.id });
+      const { error } = await supabase.rpc("send_social_request", {
+        p_receiver_id: person.id,
+        p_message: helloMessage.trim() || null,
+      });
       if (error) throw error;
       void sendPushNotification(person.id, "request");
       await loadRequests(true);
     }
+    setHelloMessage("");
     setView("success");
 
     // Poka-yoke para aceptaciones extremadamente rápidas: no esperamos
@@ -1817,6 +1826,24 @@ export default function Home() {
             <div className={`availability-pill ${selected.socialStatus === "busy" ? "busy" : ""}`}><span className="availability-dot"/> {selected.socialStatus === "busy" ? "Ocupado en una conversación" : "Disponible cerca de ti"}</div>
             <div className="section-card"><span className="section-label">Intereses</span><div className="chips">{selected.interests.map(x => <span key={x}>{x}</span>)}</div></div>
             <div className="permission-copy"><Hand size={22}/><div><strong>No mostramos dónde está exactamente.</strong><span>“Dónde me ubico” y “Qué estoy usando” permanecen ocultos hasta que exista consentimiento. Quien recibe una solicitud sí puede identificar primero a quien la envió.</span></div></div>
+            {selected.socialStatus !== "busy" && !activeConversation && (
+              <div className="hello-message-box">
+                <div className="hello-message-heading">
+                  <div>
+                    <strong>¿Quieres decirle algo?</strong>
+                    <span>Opcional · Dale contexto antes de acercarte.</span>
+                  </div>
+                  <small>{helloMessage.length}/140</small>
+                </div>
+                <textarea
+                  value={helloMessage}
+                  onChange={e => setHelloMessage(e.target.value.slice(0, 140))}
+                  maxLength={140}
+                  placeholder="Ej. ¿Comemos juntos? Tengo una hora libre."
+                  aria-label="Mensaje opcional para tu saludo"
+                />
+              </div>
+            )}
             {requestNotice && <div className="auth-feedback error">{requestNotice}</div>}
             {selected.socialStatus === "busy" ? <button className="primary busy-disabled" disabled><MessageCircle size={19}/> Ocupado</button> : activeConversation ? <button className="primary busy-disabled" disabled><MessageCircle size={19}/> Estás ocupado</button> : <button className="primary" onClick={() => requestHello(selected)}><Hand size={19}/> Quiero saludarle</button>}
           </div>
@@ -1885,6 +1912,12 @@ export default function Home() {
                     </div>
                     <p className="request-bio">{request.bio}</p>
                     {!!request.interests.length && <div className="chips request-chips">{request.interests.slice(0,5).map(x => <span key={x}>{x}</span>)}</div>}
+                    {request.direction === "incoming" && request.message && (
+                      <div className="request-message-card">
+                        <span>Por qué quiere saludarte</span>
+                        <strong>{request.message}</strong>
+                      </div>
+                    )}
                     {(request.whereIAm || request.whatImWearing) && (
                       <div className="how-to-find-card">
                         <MapPin size={19}/>
