@@ -91,189 +91,61 @@ function seededJitter(seed: number) {
   return (value - Math.floor(value)) * 2 - 1;
 }
 
-function densityScaleForCount(count: number) {
-  if (count <= 12) return 1;
-  if (count <= 24) return 0.92;
-  if (count <= 40) return 0.84;
-  if (count <= 60) return 0.76;
-  if (count <= 80) return 0.70;
-  return 0.64;
-}
+function makeCloudLayout(count: number) {
+  const polarSlots: Array<{ radius: number; angle: number }> = [];
+  let remaining = count;
+  let ring = 0;
 
-type GeoPoint = { lat: number; lng: number };
+  while (remaining > 0) {
+    const baseRadius = CLOUD_FIRST_RING + ring * CLOUD_RING_GAP;
+    const capacity = Math.max(6, Math.floor((2 * Math.PI * baseRadius) / CLOUD_MIN_CHORD));
+    const take = Math.min(remaining, capacity);
+    const phase = ring * 0.63 + seededJitter(ring + 1) * 0.22;
 
-const MAP_WORLD_SIZE = 700;
-const MAP_TILE_SIZE = 256;
-const MAP_TILE_ZOOM = 18;
-
-function mercatorWorldPixel(point: GeoPoint, zoom = MAP_TILE_ZOOM) {
-  const worldSize = MAP_TILE_SIZE * 2 ** zoom;
-  const lat = Math.max(-85.05112878, Math.min(85.05112878, point.lat));
-  const sinLat = Math.sin((lat * Math.PI) / 180);
-
-  return {
-    x: ((point.lng + 180) / 360) * worldSize,
-    y: (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * worldSize,
-  };
-}
-
-function metersPerWorldPixel(lat: number, zoom = MAP_TILE_ZOOM) {
-  return (156543.03392804097 * Math.cos((lat * Math.PI) / 180)) / 2 ** zoom;
-}
-
-function makeMapTiles(center: GeoPoint) {
-  const centerPx = mercatorWorldPixel(center);
-  const half = MAP_WORLD_SIZE / 2;
-  const minTileX = Math.floor((centerPx.x - half) / MAP_TILE_SIZE) - 1;
-  const maxTileX = Math.floor((centerPx.x + half) / MAP_TILE_SIZE) + 1;
-  const minTileY = Math.floor((centerPx.y - half) / MAP_TILE_SIZE) - 1;
-  const maxTileY = Math.floor((centerPx.y + half) / MAP_TILE_SIZE) + 1;
-  const tileCount = 2 ** MAP_TILE_ZOOM;
-
-  const tiles: Array<{ key: string; x: number; y: number; url: string }> = [];
-
-  for (let tileY = minTileY; tileY <= maxTileY; tileY++) {
-    if (tileY < 0 || tileY >= tileCount) continue;
-
-    for (let tileX = minTileX; tileX <= maxTileX; tileX++) {
-      const wrappedX = ((tileX % tileCount) + tileCount) % tileCount;
-      tiles.push({
-        key: `${tileX}:${tileY}`,
-        x: tileX * MAP_TILE_SIZE - centerPx.x + half,
-        y: tileY * MAP_TILE_SIZE - centerPx.y + half,
-        url: `https://tile.openstreetmap.org/${MAP_TILE_ZOOM}/${wrappedX}/${tileY}.png`,
+    for (let i = 0; i < take; i++) {
+      const sector = (2 * Math.PI) / take;
+      const angleJitter = seededJitter((ring + 1) * 100 + i) * sector * 0.16;
+      const radialJitter = seededJitter((ring + 1) * 1000 + i) * 20;
+      polarSlots.push({
+        radius: baseRadius + radialJitter,
+        angle: phase + i * sector + angleJitter,
       });
     }
+
+    remaining -= take;
+    ring += 1;
   }
 
-  return tiles;
-}
-
-function offsetMeters(origin: GeoPoint, eastMeters: number, northMeters: number): GeoPoint {
-  const latOffset = northMeters / 111_320;
-  const lngScale = Math.max(1, 111_320 * Math.cos((origin.lat * Math.PI) / 180));
-  const lngOffset = eastMeters / lngScale;
-  return { lat: origin.lat + latOffset, lng: origin.lng + lngOffset };
-}
-
-function distanceMetersBetweenGeo(a: GeoPoint, b: GeoPoint) {
-  const toRad = (value: number) => value * Math.PI / 180;
-  const earthRadius = 6_371_000;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const lat1 = toRad(a.lat);
-  const lat2 = toRad(b.lat);
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  return 2 * earthRadius * Math.asin(Math.sqrt(h));
-}
-
-function geoToWorld(point: GeoPoint, center: GeoPoint) {
-  const pointPx = mercatorWorldPixel(point);
-  const centerPx = mercatorWorldPixel(center);
-
-  return {
-    x: MAP_WORLD_SIZE / 2 + (pointPx.x - centerPx.x),
-    y: MAP_WORLD_SIZE / 2 + (pointPx.y - centerPx.y),
-  };
-}
-
-function stableStringSeed(value: string) {
-  let hash = 2166136261;
-  for (let i = 0; i < value.length; i++) {
-    hash ^= value.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return Math.abs(hash) || 1;
-}
-
-function makeFictionalPoint(
-  personId: string,
-  center: GeoPoint,
-  radiusMeters: number,
-  occupied: GeoPoint[]
-) {
-  const baseSeed = stableStringSeed(personId);
-
-  // UX safety zone:
-  // - no profile can sit on top of the current user
-  // - profile centers stay far enough from the 37.5 m edge that the full
-  //   visible avatar remains inside the radar at the normal entry zoom
-  const minimumRadius = radiusMeters * 0.40;
-  const usableRadius = radiusMeters * 0.64;
-
-  let best = offsetMeters(center, minimumRadius, 0);
-  let bestNearestMeters = -1;
-
-  for (let attempt = 0; attempt < 260; attempt++) {
-    const seed = baseSeed + attempt * 97;
-    const angleUnit = (seededJitter(seed) + 1) / 2;
-    const radiusUnit = (seededJitter(seed + 17) + 1) / 2;
-    const angle = angleUnit * Math.PI * 2;
-
-    // Uniform-ish area distribution inside an annulus, not a symmetric ring.
-    const distance = Math.sqrt(
-      minimumRadius * minimumRadius +
-      radiusUnit * (usableRadius * usableRadius - minimumRadius * minimumRadius)
-    );
-
-    const candidate = offsetMeters(
-      center,
-      Math.cos(angle) * distance,
-      Math.sin(angle) * distance
-    );
-
-    const nearestMeters = occupied.length
-      ? Math.min(...occupied.map(existing => distanceMetersBetweenGeo(candidate, existing)))
-      : Infinity;
-
-    if (nearestMeters > bestNearestMeters) {
-      best = candidate;
-      bestNearestMeters = nearestMeters;
-    }
-  }
-
-  return best;
-}
-
-function makeCloudLayout(
-  peopleIds: string[],
-  center: GeoPoint | null,
-  fictionalGeoById: Record<string, GeoPoint>
-) {
-  const width = MAP_WORLD_SIZE;
-  const height = MAP_WORLD_SIZE;
+  const maxRadius = polarSlots.length
+    ? Math.max(...polarSlots.map(slot => slot.radius))
+    : CLOUD_FIRST_RING;
+  const diameter = Math.max(700, (maxRadius + CLOUD_EDGE_PADDING) * 2);
+  const width = diameter;
+  const height = Math.max(660, diameter);
   const centerX = width / 2;
   const centerY = height / 2;
-
-  if (!center) {
-    return {
-      width,
-      height,
-      centerX,
-      centerY,
-      people: peopleIds.map((_, i) => {
-        const angle = i * 2.399963229728653;
-        const r = 90 + (i % 5) * 18;
-        return {
-          x: centerX + Math.cos(angle) * r,
-          y: centerY + Math.sin(angle) * r,
-        };
-      }),
-    };
-  }
 
   return {
     width,
     height,
     centerX,
     centerY,
-    people: peopleIds.map(id => {
-      const point = fictionalGeoById[id];
-      return point ? geoToWorld(point, center) : { x: centerX, y: centerY };
-    }),
+    people: polarSlots.map(slot => ({
+      x: centerX + Math.cos(slot.angle) * slot.radius,
+      y: centerY + Math.sin(slot.angle) * slot.radius,
+    })),
   };
+}
+
+function mapEmbedUrl(coords: { lat: number; lng: number } | null) {
+  if (!coords) return "";
+  const latSpan = 0.0032;
+  const lngSpan = 0.0042;
+  const left = coords.lng - lngSpan;
+  const right = coords.lng + lngSpan;
+  const bottom = coords.lat - latSpan;
+  const top = coords.lat + latSpan;
+  return `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(`${left},${bottom},${right},${top}`)}&layer=mapnik`;
 }
 
 function isProfileComplete(profile: { name: string; bio: string; avatar: string; interests: string[]; mood: string; whereIAm: string; whatImWearing: string }) {
@@ -351,9 +223,6 @@ export default function Home() {
   const notifiedAcceptedRequestIdsRef = useRef<Set<number>>(new Set());
   const peopleCanvasRef = useRef<HTMLDivElement | null>(null);
   const [canvasZoom, setCanvasZoom] = useState(1);
-  const [radarScanKey, setRadarScanKey] = useState(0);
-  const [fictionalGeoById, setFictionalGeoById] = useState<Record<string, GeoPoint>>({});
-  const viewerIdRef = useRef("");
   const canvasZoomRef = useRef(1);
   const canvasPointersRef = useRef(new Map<number, { x: number; y: number }>());
   const canvasGestureRef = useRef<{
@@ -375,7 +244,7 @@ export default function Home() {
     notifiedAcceptedRequestIdsRef.current.add(requestId);
   }
 
-  const radius = Number(process.env.NEXT_PUBLIC_NEARBY_RADIUS_METERS || 37.5);
+  const radius = Number(process.env.NEXT_PUBLIC_NEARBY_RADIUS_METERS || 75);
   const profileComplete = useMemo(() => isProfileComplete({ name, bio, avatar: avatarUrl, interests, mood, whereIAm, whatImWearing }), [name, bio, avatarUrl, interests, mood, whereIAm, whatImWearing]);
   const nearbyCount = useMemo(() => people.length, [people]);
   const pendingIncomingCount = useMemo(() => requests.filter(r => r.direction === "incoming" && r.status === "pending").length, [requests]);
@@ -383,91 +252,7 @@ export default function Home() {
   const incomingRequests = useMemo(() => requests.filter(r => r.direction === "incoming"), [requests]);
   const outgoingRequests = useMemo(() => requests.filter(r => r.direction === "outgoing"), [requests]);
   const visibleRequests = requestTab === "incoming" ? incomingRequests : outgoingRequests;
-
-  const locationRadiusPx = useMemo(() => {
-    if (!coords) return 80;
-    return radius / Math.max(metersPerWorldPixel(coords.lat), 0.01);
-  }, [coords?.lat, radius]);
-
-  const cloudLayout = useMemo(
-    () => makeCloudLayout(people.map(person => person.id), coords, fictionalGeoById),
-    [people, coords?.lat, coords?.lng, fictionalGeoById]
-  );
-  const peopleDensityScale = useMemo(() => densityScaleForCount(people.length), [people.length]);
-  const mapTiles = useMemo(() => coords ? makeMapTiles(coords) : [], [coords?.lat, coords?.lng]);
-  const myWorldPoint = useMemo(
-    () => coords ? geoToWorld(coords, coords) : { x: cloudLayout.centerX, y: cloudLayout.centerY },
-    [coords?.lat, coords?.lng, cloudLayout.centerX, cloudLayout.centerY]
-  );
-
-  function triggerRadarScan() {
-    setRadarScanKey(current => current + 1);
-  }
-
-  function assignFictionalGeo(nextPeople: Person[], center: GeoPoint) {
-    const viewerKey = viewerIdRef.current || "local";
-    const storageKey = `circle:fictional-map:${viewerKey}`;
-
-    setFictionalGeoById(previousState => {
-      let persisted: Record<string, GeoPoint> = {};
-
-      try {
-        const raw = window.localStorage.getItem(storageKey);
-        if (raw) persisted = JSON.parse(raw);
-      } catch {}
-
-      // State wins over persisted storage. We intentionally keep entries for
-      // people who temporarily disappear so, if they return, they get the same spot.
-      const next: Record<string, GeoPoint> = {
-        ...persisted,
-        ...previousState,
-      };
-
-      const visibleExisting: GeoPoint[] = [];
-
-      // First validate only the currently visible people's saved coordinates.
-      // Tiny GPS jitter must NOT reorganize anybody.
-      for (const person of nextPeople) {
-        const existing = next[person.id];
-        if (!existing) continue;
-
-        const distanceFromCurrentCenter = distanceMetersBetweenGeo(center, existing);
-
-        // Only invalidate a coordinate after a genuine change of area.
-        // The assignment itself is <= 64% of the radius, so 86% leaves ample
-        // tolerance for normal GPS jitter while still protecting the radar edge.
-        if (
-          distanceFromCurrentCenter > radius * 0.86 ||
-          distanceFromCurrentCenter < radius * 0.28
-        ) {
-          delete next[person.id];
-        } else {
-          visibleExisting.push(existing);
-        }
-      }
-
-      // Only NEW / invalidated people get a new fictional map coordinate.
-      for (const person of nextPeople) {
-        if (next[person.id]) continue;
-
-        const point = makeFictionalPoint(
-          `${viewerKey}:${person.id}`,
-          center,
-          radius,
-          visibleExisting
-        );
-
-        next[person.id] = point;
-        visibleExisting.push(point);
-      }
-
-      try {
-        window.localStorage.setItem(storageKey, JSON.stringify(next));
-      } catch {}
-
-      return next;
-    });
-  }
+  const cloudLayout = useMemo(() => makeCloudLayout(people.length), [people.length]);
 
   function distanceMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
     const toRad = (v: number) => v * Math.PI / 180;
@@ -485,7 +270,6 @@ export default function Home() {
     const { data: sessionData } = await supabase.auth.getSession();
     const user = sessionData.session?.user;
     if (!user) return;
-    viewerIdRef.current = user.id;
 
     const [{ data: profile }, { data: presence }] = await Promise.all([
       supabase.from("profiles").select("display_name,bio,avatar_url,interests,intent").eq("id", user.id).maybeSingle(),
@@ -817,8 +601,6 @@ export default function Home() {
       try { await currentSupabase?.auth.signOut({ scope: "local" as any }); } catch {}
     } finally {
       setIsAuthenticated(false);
-      viewerIdRef.current = "";
-      setFictionalGeoById({});
       setPeople(demoPeople);
       setSelected(null);
       setRequests([]);
@@ -902,53 +684,40 @@ export default function Home() {
     setStatus("Buscando personas cerca de ti…");
 
     try {
-      const location = await currentLocation("search", { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
+      const location = await currentLocation("search", { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 });
       setCoords(location);
 
       if (!supabase) {
         setPeople(demoPeople);
-        assignFictionalGeo(demoPeople, location);
         setStatus("Personas disponibles cerca de ti.");
         setView("radar");
-        triggerRadarScan();
         return;
       }
 
       await supabase.rpc("update_my_presence_location", { user_lat: location.lat, user_lng: location.lng });
       lastPresenceCoordsRef.current = location;
 
-      const { data: sessionData } = await supabase.auth.getSession();
-      const myUserId = sessionData.session?.user.id;
-
-      const { data, error } = await supabase.rpc("nearby_profiles_precise", {
+      const { data, error } = await supabase.rpc("nearby_profiles", {
         user_lat: location.lat,
         user_lng: location.lng,
         radius_meters: radius,
       });
-      if (error) throw error;
 
-      const realPeople: Person[] = data?.length ? data
-        .filter((p: any) => p.id !== myUserId)
-        .map((p: any) => ({
-          id: p.id,
-          name: p.display_name || "Alguien cerca",
-          initials: (p.display_name || "C").slice(0, 1).toUpperCase(),
-          bio: p.bio || "Disponible para socializar.",
-          intent: p.intent || "Socializar",
-          interests: p.interests || [],
-          avatar: p.avatar_url || "",
-          socialStatus: p.social_status === "busy" ? "busy" : "available",
-          simulated: false,
-        })) : [];
+      const realPeople: Person[] = !error && data?.length ? data.map((p: any) => ({
+        id: p.id,
+        name: p.display_name || "Alguien cerca",
+        initials: (p.display_name || "C").slice(0, 1).toUpperCase(),
+        bio: p.bio || "Disponible para socializar.",
+        intent: p.intent || "Socializar",
+        interests: p.interests || [],
+        avatar: p.avatar_url || "",
+        socialStatus: p.social_status === "busy" ? "busy" : "available",
+        simulated: false,
+      })) : [];
 
-      // Los demos rellenan únicamente cuando todavía no hay suficientes usuarios reales.
-      const demoFill = demoPeople.slice(0, Math.max(0, 5 - realPeople.length));
-      const nextPeople = [...realPeople, ...demoFill].slice(0, 100);
-      setPeople(nextPeople);
-      assignFictionalGeo(nextPeople, location);
+      setPeople([...realPeople.slice(0, 5), ...demoPeople].slice(0, 10));
       setStatus("Personas disponibles actualizadas.");
       setView("radar");
-      triggerRadarScan();
     } catch (error: any) {
       setPeople(demoPeople);
       setStatus(error?.message || "Activa tu ubicación para ver personas reales cerca de ti.");
@@ -1310,10 +1079,7 @@ export default function Home() {
 
   async function refreshNearbyAt(location: { lat: number; lng: number }, silent = false) {
     if (!supabase) return;
-    const { data: sessionData } = await supabase.auth.getSession();
-    const myUserId = sessionData.session?.user.id;
-
-    const { data, error } = await supabase.rpc("nearby_profiles_precise", {
+    const { data, error } = await supabase.rpc("nearby_profiles", {
       user_lat: location.lat,
       user_lng: location.lng,
       radius_meters: radius,
@@ -1322,29 +1088,23 @@ export default function Home() {
       if (!silent) setStatus(error.message || "No pudimos actualizar las personas cercanas.");
       return;
     }
-    const realPeople: Person[] = data?.length ? data
-      .filter((p: any) => p.id !== myUserId)
-      .map((p: any) => ({
-        id: p.id,
-        name: p.display_name || "Alguien cerca",
-        initials: (p.display_name || "C").slice(0, 1).toUpperCase(),
-        bio: p.bio || "Disponible para socializar.",
-        intent: p.intent || "Socializar",
-        interests: p.interests || [],
-        avatar: p.avatar_url || "",
-        socialStatus: p.social_status === "busy" ? "busy" : "available",
-        simulated: false,
-      })) : [];
-    const demoFill = demoPeople.slice(0, Math.max(0, 5 - realPeople.length));
-    const nextPeople = [...realPeople, ...demoFill].slice(0, 100);
-    setPeople(nextPeople);
-    assignFictionalGeo(nextPeople, location);
+    const realPeople: Person[] = data?.length ? data.map((p: any) => ({
+      id: p.id,
+      name: p.display_name || "Alguien cerca",
+      initials: (p.display_name || "C").slice(0, 1).toUpperCase(),
+      bio: p.bio || "Disponible para socializar.",
+      intent: p.intent || "Socializar",
+      interests: p.interests || [],
+      avatar: p.avatar_url || "",
+      socialStatus: p.social_status === "busy" ? "busy" : "available",
+      simulated: false,
+    })) : [];
+    setPeople([...realPeople.slice(0, 5), ...demoPeople].slice(0, 10));
     if (!silent) setStatus(`${realPeople.length ? `${realPeople.length} ${realPeople.length === 1 ? "persona real cerca" : "personas reales cerca"} · ` : ""}Actualizado ahora.`);
   }
 
   async function updatePresenceAndNearby() {
     setProfileError("");
-    triggerRadarScan();
     if (!profileComplete) {
       openMyProfile("Completa tu perfil para activar tu presencia y actualizar las personas cercanas.");
       return;
@@ -1365,7 +1125,7 @@ export default function Home() {
       const user = sessionData.session?.user;
       if (!user) throw new Error("Tu sesión expiró. Inicia sesión nuevamente.");
 
-      const location = await currentLocation("update", { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
+      const location = await currentLocation("update", { enableHighAccuracy: true, timeout: 8000, maximumAge: 15000 });
 
       // “Actualizar” refresca el mood/estatus y la presencia, sin modificar el resto del perfil.
       const { error: moodError } = await supabase.from("profiles").update({ intent: mood }).eq("id", user.id);
@@ -1432,7 +1192,7 @@ export default function Home() {
 
       let locationForPresence = coords;
       if (!locationForPresence) {
-        locationForPresence = await currentLocation("save", { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 });
+        locationForPresence = await currentLocation("save", { enableHighAccuracy: true, timeout: 8000, maximumAge: 15000 });
         setCoords(locationForPresence);
       }
 
@@ -1603,18 +1363,8 @@ export default function Home() {
         const nextCoords = { lat: next.latitude, lng: next.longitude };
         const previous = lastPresenceCoordsRef.current || coords;
 
-        if (previous) {
-          const movement = distanceMeters(previous, nextCoords);
-          const reportedAccuracy = Number.isFinite(next.accuracy) ? next.accuracy : 12;
+        if (previous && distanceMeters(previous, nextCoords) < 25) return;
 
-          // iPhone GPS "breathes" a few meters even while the phone is still.
-          // Do not visually recenter the map for movements that fit inside normal
-          // GPS uncertainty. This is what was causing the tiny periodic jumps.
-          const jitterThreshold = Math.max(5, Math.min(10, reportedAccuracy * 0.45));
-          if (movement < jitterThreshold) return;
-        }
-
-        // Only a meaningful physical movement recenters the radar.
         lastPresenceCoordsRef.current = nextCoords;
         setCoords(nextCoords);
 
@@ -1630,7 +1380,7 @@ export default function Home() {
       (error) => {
         if (error.code === error.PERMISSION_DENIED) registerLocationIssue(error, "update");
       },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+      { enableHighAccuracy: true, maximumAge: 20000, timeout: 10000 }
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
@@ -1647,32 +1397,16 @@ export default function Home() {
     });
   }
 
-  function minimumRadarZoom() {
-    // Mantiene las burbujas físicamente dentro del círculo incluso en el
-    // nivel de zoom más abierto permitido para esa densidad.
-    const screenBubbleRadius = 48 * peopleDensityScale;
-    const worldMargin = Math.max(24, locationRadiusPx * 0.36);
-    return Math.max(0.72, screenBubbleRadius / worldMargin);
-  }
-
   function setComfortableCanvasZoom() {
     const el = peopleCanvasRef.current;
     if (!el) return;
-
-    // Con poca gente mostramos contexto. Conforme aumenta la densidad,
-    // "entramos" al radar para darle más superficie visual a las personas.
-    const densityBoost =
-      people.length <= 10 ? 1 :
-      people.length <= 20 ? 1.18 :
-      people.length <= 35 ? 1.42 :
-      people.length <= 50 ? 1.72 :
-      people.length <= 75 ? 2.08 :
-      2.42;
-
-    const baseDiameter = Math.min(el.clientWidth * 1.22, el.clientHeight * 0.78);
-    const baseZoom = baseDiameter / Math.max(locationRadiusPx * 2, 1);
-    const nextZoom = Math.min(4.6, Math.max(minimumRadarZoom(), baseZoom * densityBoost));
-
+    const padding = 22;
+    const fitX = Math.max(0.28, (el.clientWidth - padding) / cloudLayout.width);
+    const fitY = Math.max(0.28, (el.clientHeight - padding) / cloudLayout.height);
+    const exactFit = Math.min(1, fitX, fitY);
+    // Entry view: show several people at once while keeping names readable.
+    const comfortableFloor = el.clientWidth <= 480 ? 0.72 : 0.78;
+    const nextZoom = Math.min(1, Math.max(exactFit, comfortableFloor));
     canvasZoomRef.current = nextZoom;
     setCanvasZoom(nextZoom);
     centerPeopleCanvas();
@@ -1683,7 +1417,7 @@ export default function Home() {
     if (!el) return;
 
     const oldZoom = canvasZoomRef.current;
-    const nextZoom = Math.min(4.8, Math.max(minimumRadarZoom(), Number(nextValue.toFixed(3))));
+    const nextZoom = Math.min(2.2, Math.max(0.35, Number(nextValue.toFixed(3))));
     if (Math.abs(nextZoom - oldZoom) < 0.002) return;
 
     const localX = anchorX ?? el.clientWidth / 2;
@@ -1936,7 +1670,17 @@ export default function Home() {
 
         {view === "radar" && (
           <div className="radar-screen">
-            <div className="people-cloud-frame radar-map-stage" aria-label="Personas disponibles dentro de un diámetro de 75 metros. Las posiciones de otras personas son ilustrativas por privacidad.">
+            <div className="people-cloud-frame radar-map-stage" aria-label="Personas disponibles cerca. La posición de las burbujas es ilustrativa.">
+              {coords && (
+                <iframe
+                  className="social-map-background"
+                  title="Mapa de referencia de tu zona"
+                  src={mapEmbedUrl(coords)}
+                  loading="lazy"
+                  tabIndex={-1}
+                  aria-hidden="true"
+                />
+              )}
               <div
                 className="people-cloud-scroll"
                 ref={peopleCanvasRef}
@@ -1949,86 +1693,14 @@ export default function Home() {
                 <div className="people-cloud-world" style={{ width: `max(100%, ${Math.round(cloudLayout.width * canvasZoom)}px)`, height: `max(100%, ${Math.round(cloudLayout.height * canvasZoom)}px)` }}>
                   <div className="people-cloud-scale-layer" style={{ width: `${cloudLayout.width * canvasZoom}px`, height: `${cloudLayout.height * canvasZoom}px` }}>
                     <div className="people-cloud-canvas" style={{ width: `${cloudLayout.width}px`, height: `${cloudLayout.height}px`, transform: `scale(${canvasZoom})` }}>
-                      {coords && (
-                        <>
-                          <div className="social-map-background social-map-world" aria-hidden="true">
-                            {mapTiles.map(tile => (
-                              <img
-                                key={tile.key}
-                                className="osm-map-tile"
-                                src={tile.url}
-                                alt=""
-                                draggable={false}
-                                style={{
-                                  left: `${tile.x}px`,
-                                  top: `${tile.y}px`,
-                                  width: `${MAP_TILE_SIZE}px`,
-                                  height: `${MAP_TILE_SIZE}px`,
-                                }}
-                              />
-                            ))}
-                          </div>
-                          <div className="map-gray-wash" aria-hidden="true" />
-                          <div
-                            className="my-location-radius"
-                            aria-hidden="true"
-                            style={{
-                              left: `${myWorldPoint.x}px`,
-                              top: `${myWorldPoint.y}px`,
-                              width: `${locationRadiusPx * 2}px`,
-                              height: `${locationRadiusPx * 2}px`,
-                            }}
-                          />
-                          {radarScanKey > 0 && (
-                            <div
-                              key={radarScanKey}
-                              className="map-radar-scan"
-                              aria-hidden="true"
-                              style={{
-                                left: `${myWorldPoint.x}px`,
-                                top: `${myWorldPoint.y}px`,
-                                width: `${locationRadiusPx * 2}px`,
-                                height: `${locationRadiusPx * 2}px`,
-                              }}
-                            >
-                              <span className="radar-sweep" />
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </div>
-
-                    <div
-                      className="people-marker-layer"
-                      style={{ width: `${cloudLayout.width * canvasZoom}px`, height: `${cloudLayout.height * canvasZoom}px` }}
-                    >
                       {people.map((p, i) => (
-                        <button
-                          key={p.id}
-                          className={`person-bubble map-fixed-marker ${p.socialStatus === "busy" ? "busy" : ""} ${people.length > 40 ? "dense" : ""} ${people.length > 70 ? "very-dense" : ""}`}
-                          style={{
-                            left: `${cloudLayout.people[i].x * canvasZoom}px`,
-                            top: `${cloudLayout.people[i].y * canvasZoom}px`,
-                            transform: `translate(-50%, -50%) scale(${peopleDensityScale})`,
-                          }}
-                          onClick={() => openPerson(p)}
-                        >
+                        <button key={p.id} className={`person-bubble ${p.socialStatus === "busy" ? "busy" : ""}`} style={{ left: `${cloudLayout.people[i].x}px`, top: `${cloudLayout.people[i].y}px` }} onClick={() => openPerson(p)}>
                           <span className="intent-tag">{p.intent}</span>
                           {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name}/> : <span className="avatar-fallback locked-avatar"><UserRound size={28}/></span>}
                           <strong>{p.name}</strong><small>{p.socialStatus === "busy" ? "Ocupado" : "Disponible"}</small>
                         </button>
                       ))}
-
-                      <button
-                        className={`my-bubble map-fixed-marker ${activeConversation ? "busy" : ""}`}
-                        style={{
-                          left: `${myWorldPoint.x * canvasZoom}px`,
-                          top: `${myWorldPoint.y * canvasZoom}px`,
-                          transform: "translate(-50%, -50%)",
-                        }}
-                        onClick={() => openMyProfile()}
-                        aria-label="Abrir mi perfil"
-                      >
+                      <button className={`my-bubble ${activeConversation ? "busy" : ""}`} style={{ left: `${cloudLayout.centerX}px`, top: `${cloudLayout.centerY}px` }} onClick={() => openMyProfile()} aria-label="Abrir mi perfil">
                         {avatarUrl ? <img src={avatarUrl} alt="Tu perfil"/> : <span className="my-avatar-empty"><UserRound size={30}/></span>}
                         <strong>Tú</strong>
                         <small>{profileComplete ? (activeConversation ? "Ocupado" : mood) : "Completar perfil"}</small>
@@ -2037,15 +1709,14 @@ export default function Home() {
                   </div>
                 </div>
               </div>
-              <div className="cloud-note">{people.length > 20 ? `${people.length} cerca · ` : ""}{Math.round(canvasZoom * 100)}% · pellizca para zoom · arrastra para explorar</div>
-              <div className="osm-attribution">© OpenStreetMap</div>
+              <div className="cloud-note">{Math.round(canvasZoom * 100)}% · pellizca para zoom · arrastra para explorar</div>
             </div>
 
             <div className="radar-floating-stack">
               <div className="nearby-floating-card">
                 <span className="subtle">Personas cerca de ti</span>
                 <h2>{nearbyCount} personas cerca</h2>
-                <small className="nearby-summary"><span className="nearby-available-dot" />{availableNearbyCount} disponibles{nearbyCount - availableNearbyCount > 0 ? ` · ${nearbyCount - availableNearbyCount} ocupadas` : ""}</small>
+                <small className="nearby-summary">{availableNearbyCount} disponibles{nearbyCount - availableNearbyCount > 0 ? ` · ${nearbyCount - availableNearbyCount} ocupadas` : ""}</small>
                 {status && <div className="status-line">{status}</div>}
               </div>
 
@@ -2153,11 +1824,11 @@ export default function Home() {
             {requestsLoading ? <div className="requests-empty">Cargando solicitudes…</div> : visibleRequests.length === 0 ? <div className="requests-empty"><Hand size={26}/><strong>{requestTab === "incoming" ? "Aún no tienes solicitudes recibidas" : "Aún no has enviado saludos"}</strong><span>{requestTab === "incoming" ? "Cuando alguien quiera saludarte aparecerá aquí." : "Los saludos que envíes aparecerán aquí."}</span></div> : (
               <div className="request-list">
                 {visibleRequests.map(request => (
-                  <article className={`request-card ${request.direction === "outgoing" && request.status === "declined" ? "pending" : request.status}`} key={request.id}>
+                  <article className={`request-card ${request.status}`} key={request.id}>
                     <div className="request-person">
                       {request.avatar ? <img src={request.avatar} alt={request.name}/> : <span className="request-avatar-fallback"><UserRound size={25}/></span>}
                       <div><span className="request-direction">{request.direction === "incoming" ? "Quiere saludarte" : "Solicitud enviada"}</span><h3>{request.name}</h3><small>{request.intent}</small></div>
-                      <span className={`request-status status-${request.direction === "outgoing" && request.status === "declined" ? "pending" : request.status}`}>{request.direction === "outgoing" && request.status === "declined" ? "Pendiente" : request.status === "pending" ? "Pendiente" : request.status === "accepted" ? "Aceptada" : request.status === "declined" ? "Rechazada" : "Cancelada"}</span>
+                      <span className={`request-status status-${request.status}`}>{request.status === "pending" ? "Pendiente" : request.status === "accepted" ? "Aceptada" : request.status === "declined" ? "Rechazada" : "Cancelada"}</span>
                     </div>
                     <p className="request-bio">{request.bio}</p>
                     {!!request.interests.length && <div className="chips request-chips">{request.interests.slice(0,5).map(x => <span key={x}>{x}</span>)}</div>}
@@ -2177,12 +1848,10 @@ export default function Home() {
                         <button className="accept-request" disabled={requestActionId === request.id} onClick={() => respondToRequest(request, "accepted")}><Check size={18}/>{requestActionId === request.id ? "Procesando…" : "Puede acercarse"}</button>
                       </div>
                     )}
-                    {request.direction === "outgoing" && (request.status === "pending" || request.status === "declined") && (
+                    {request.direction === "outgoing" && request.status === "pending" && (
                       <div className="outgoing-pending-row">
                         <div className="waiting-copy">Esperando respuesta. Su ubicación sigue oculta.</div>
-                        {request.status === "pending" && (
-                          <button className="cancel-request" type="button" disabled={requestActionId === request.id} onClick={() => cancelRequest(request)}>{requestActionId === request.id ? "Cancelando…" : "Cancelar saludo"}</button>
-                        )}
+                        <button className="cancel-request" type="button" disabled={requestActionId === request.id} onClick={() => cancelRequest(request)}>{requestActionId === request.id ? "Cancelando…" : "Cancelar saludo"}</button>
                       </div>
                     )}
                     {request.direction === "outgoing" && request.status === "accepted" && (request.whereIAm || request.whatImWearing) && <div className="accepted-copy"><Check size={16}/> Ya puedes acercarte a saludarle. Ambos aparecen como ocupados hasta finalizar la plática.</div>}

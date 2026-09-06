@@ -29,8 +29,7 @@
 .incoming-alert{width:100%;border:1px solid #d5e4ff;background:linear-gradient(135deg,#eef5ff,#f8fbff);border-radius:16px;padding:12px 13px;margin:10px 0 3px;display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;text-align:left;color:#2866dc;cursor:pointer}.incoming-alert div{display:flex;flex-direction:column;gap:2px}.incoming-alert strong{font-size:12px;color:#243854}.incoming-alert span{font-size:10px;color:#72829a}.incoming-alert-arrow{font-size:23px!important;color:#3a72d7!important;line-height:1}
 
 /* Social presence: available vs busy */
-.nearby-summary{display:flex;align-items:center;gap:6px;margin-top:3px;color:#7b879a;font-size:10px;font-weight:700}
-.nearby-available-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px rgba(11,168,142,.12);flex:0 0 auto}
+.nearby-summary{display:block;margin-top:3px;color:#7b879a;font-size:10px;font-weight:700}
 .person-bubble.busy img,.person-bubble.busy .avatar-fallback{box-shadow:0 0 0 4px #eee7ff,0 10px 24px rgba(100,67,183,.18);border-color:#fff}
 .person-bubble.busy .intent-tag{background:#f0eaff;color:#6b4ac4}
 .person-bubble.busy small{color:#7254bf;font-weight:900}
@@ -52,25 +51,12 @@
 
 /* Scrollable social canvas: positions are illustrative, never geographic. */
 .people-cloud-frame{position:relative;margin:0 -6px 10px;border-radius:28px;border:1px solid #edf2fb;background:linear-gradient(180deg,#fbfdff,#f7faff);overflow:hidden}
-.social-map-background{position:absolute;inset:0;width:100%;height:100%;border:0;z-index:0;pointer-events:none;filter:grayscale(1) saturate(0) contrast(.86) brightness(1.07);opacity:.36;background:#eef1f4}
-.social-map-world{transform:none!important;transform-origin:center}
-.map-gray-wash{position:absolute;inset:0;z-index:1;pointer-events:none;background:rgba(245,247,249,.40)}
-.people-cloud-frame::after{display:none}
+.social-map-background{position:absolute;inset:0;width:100%;height:100%;border:0;z-index:0;pointer-events:none;filter:grayscale(1) saturate(0) contrast(.78) brightness(1.12);opacity:.24;transform:scale(1.02);transform-origin:center;background:#f4f6f8}
+.people-cloud-frame::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;background:rgba(249,251,253,.58)}
 .people-cloud-scroll{position:relative;z-index:2;height:520px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#d7e2f2 transparent;-webkit-overflow-scrolling:touch;touch-action:none;cursor:grab;user-select:none}
-.people-cloud-canvas{position:relative;min-width:100%;min-height:100%;background:#eef1f4}
-.people-cloud-canvas .person-bubble{z-index:6}
-.people-cloud-canvas .my-bubble{z-index:10}
-
-.my-location-radius{position:absolute;z-index:3;transform:translate(-50%,-50%);border-radius:50%;border:1.5px solid rgba(47,116,255,.50);background:rgba(47,116,255,.055);box-shadow:inset 0 0 0 1px rgba(255,255,255,.34),0 0 26px rgba(47,116,255,.08);pointer-events:none}
-.my-location-dot{position:absolute;z-index:8;transform:translate(-50%,-50%);width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(18,50,105,.2);display:grid;place-items:center;pointer-events:none}
-.my-location-dot>span{width:10px;height:10px;border-radius:50%;background:#2f74ff}
-
-.map-radar-scan{position:absolute;z-index:4;transform:translate(-50%,-50%);border-radius:50%;overflow:hidden;pointer-events:none;animation:circleRadarContainer 2.5s ease-out forwards}
-.map-radar-scan .radar-sweep{position:absolute;inset:0;border-radius:50%;background:conic-gradient(from 0deg,transparent 0deg,transparent 318deg,rgba(47,116,255,.025) 330deg,rgba(47,116,255,.24) 354deg,rgba(47,116,255,.02) 360deg);animation:circleRadarSweep 2.5s cubic-bezier(.2,.72,.2,1) forwards;transform-origin:center}
-@keyframes circleRadarSweep{0%{transform:rotate(-25deg);opacity:0}8%{opacity:1}90%{opacity:.9}100%{transform:rotate(443deg);opacity:0}}
-@keyframes circleRadarContainer{0%,88%{opacity:1}100%{opacity:0}}
-.people-cloud-canvas .person-bubble{width:126px;transform-origin:center center}
-.people-cloud-canvas .my-bubble{transform-origin:center center}
+.people-cloud-canvas{position:relative;min-width:100%;min-height:100%;background:radial-gradient(circle at 48% 45%,rgba(47,116,255,.045),transparent 30%),radial-gradient(circle at 75% 72%,rgba(11,168,142,.035),transparent 25%)}
+.people-cloud-canvas .person-bubble{transform:translate(-50%,-50%);width:126px}
+.people-cloud-canvas .my-bubble{transform:translate(-50%,-50%)}
 .people-cloud-frame .cloud-note{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);z-index:15;pointer-events:none;box-shadow:0 5px 16px rgba(25,44,78,.06)}
 .people-cloud-scroll::-webkit-scrollbar{width:7px;height:7px}.people-cloud-scroll::-webkit-scrollbar-thumb{background:#d7e2f2;border-radius:999px}.people-cloud-scroll::-webkit-scrollbar-track{background:transparent}
 @media(max-width:480px){.people-cloud-scroll{height:500px}.people-cloud-canvas .person-bubble{width:122px}}
@@ -87,7 +73,7 @@
 
 /* Responsive social panorama: fit all on entry, then allow manual zoom and 2D scrolling. */
 .people-cloud-world{position:relative;display:grid;place-items:center;min-width:100%;min-height:100%}
-.people-cloud-scale-layer{position:relative;flex:0 0 auto;overflow:hidden}
+.people-cloud-scale-layer{position:relative;flex:0 0 auto}
 .people-cloud-canvas{position:absolute;left:0;top:0;transform-origin:top left;will-change:transform}
 .canvas-controls{position:absolute;right:12px;top:12px;z-index:30;display:flex;align-items:center;gap:5px;padding:5px;background:rgba(255,255,255,.92);border:1px solid #e4ebf6;border-radius:14px;box-shadow:0 8px 24px rgba(24,47,93,.12);backdrop-filter:blur(10px)}
 .canvas-controls button{border:0;background:#f1f5fb;color:#38527e;height:34px;min-width:34px;padding:0 9px;border-radius:9px;font-weight:900;font-size:18px;cursor:pointer;display:grid;place-items:center}
@@ -142,6 +128,7 @@ body{width:100%;max-width:100%;overflow-x:hidden}
 .radar-screen{position:relative;flex:1;min-height:0;padding:0;overflow:hidden;background:#f4f6f8}
 .radar-map-stage{position:absolute;inset:0;margin:0;border:0;border-radius:0;background:#f4f6f8;overflow:hidden}
 .radar-map-stage .people-cloud-scroll{height:100%;width:100%}
+.radar-map-stage .social-map-background{border-radius:0}
 .radar-map-stage .cloud-note{bottom:112px;background:rgba(255,255,255,.78);backdrop-filter:blur(8px)}
 .radar-floating-stack{position:absolute;z-index:45;left:16px;right:16px;top:16px;display:flex;flex-direction:column;gap:9px;pointer-events:none;max-height:calc(100% - 150px);overflow:visible}
 .radar-floating-stack>*{pointer-events:auto}
@@ -176,189 +163,4 @@ body{width:100%;max-width:100%;overflow-x:hidden}
 @media(max-width:480px){
   .page-shell.radar-page-shell{height:100dvh;min-height:100dvh;padding:0!important;overflow:hidden}
   .page-shell.radar-page-shell .phone-card.radar-mode{height:100dvh;min-height:100dvh;max-height:100dvh}
-}
-
-
-/* Adaptive radar density: up to ~100 people without turning the canvas into a wall of labels. */
-.person-bubble.dense small{display:none}
-.person-bubble.dense .intent-tag{font-size:8px;padding:3px 5px}
-.person-bubble.very-dense .intent-tag{display:none}
-.person-bubble.very-dense strong{font-size:12px;margin-top:4px}
-.person-bubble.dense,.person-bubble.very-dense{transition:transform .16s ease}
-
-
-/* Map-style marker anchoring.
-   The anchor owns the coordinate in the radar world; the visual bubble can resize
-   independently without ever changing that coordinate. */
-.person-map-anchor,
-.my-map-anchor{
-  position:absolute;
-  width:0;
-  height:0;
-  z-index:6;
-  pointer-events:none;
-}
-
-.my-map-anchor{z-index:10}
-
-.person-map-anchor .person-bubble,
-.my-map-anchor .my-bubble{
-  position:absolute;
-  left:0!important;
-  top:0!important;
-  transform-origin:center center;
-  pointer-events:auto;
-}
-
-
-
-/* Geographic anchoring:
-   - the radar circle is 75 m in diameter (37.5 m radius)
-   - the current user's marker is anchored to their real map coordinate
-   - other profiles use deterministic fictitious map coordinates inside the radar
-   - marker visuals counter-scale so their on-screen size stays stable while zooming */
-
-
-/* Radar geometry v2: equal metric scale on both map axes; markers are center-constrained
-   so their full visible circles remain inside the 37.5 m radius at supported zoom levels. */
-
-
-/* Exact map-marker anchoring.
-   The zero-size anchor is the geographic coordinate. Scaling happens in a child layer
-   whose origin is exactly (0,0), so marker centers never drift during pinch zoom. */
-.person-map-anchor,
-.my-map-anchor{
-  transform:none!important;
-}
-
-.map-marker-counter-scale{
-  position:absolute;
-  left:0;
-  top:0;
-  width:0;
-  height:0;
-  transform-origin:0 0;
-  pointer-events:none;
-}
-
-.map-marker-counter-scale .person-bubble,
-.map-marker-counter-scale .my-bubble{
-  position:absolute!important;
-  left:0!important;
-  top:0!important;
-  transform:translate(-50%,-50%)!important;
-  transform-origin:center center!important;
-  pointer-events:auto;
-}
-
-
-/* Exact OpenStreetMap tile plane.
-   Tiles, the 37.5 m radius, the current-user coordinate and fictitious
-   profile coordinates all share one Web Mercator coordinate system. */
-.social-map-world{
-  position:absolute;
-  inset:0;
-  width:100%;
-  height:100%;
-  overflow:hidden;
-  background:#eef1f4;
-  z-index:0;
-  pointer-events:none;
-}
-
-.osm-map-tile{
-  position:absolute;
-  max-width:none;
-  user-select:none;
-  pointer-events:none;
-  filter:grayscale(1) saturate(0) contrast(.88) brightness(1.06);
-  opacity:.42;
-}
-
-.osm-attribution{
-  position:absolute;
-  z-index:20;
-  right:7px;
-  bottom:5px;
-  padding:2px 5px;
-  border-radius:6px;
-  background:rgba(255,255,255,.64);
-  color:#8b94a4;
-  font-size:7px;
-  line-height:1;
-  pointer-events:none;
-  backdrop-filter:blur(5px);
-}
-
-/* The geographic anchor is zero-sized and never scales independently.
-   Only the marker artwork counter-scales, so its center cannot drift. */
-.person-map-anchor,
-.my-map-anchor{
-  position:absolute;
-  width:0;
-  height:0;
-  transform:none!important;
-  pointer-events:none;
-}
-
-.map-marker-counter-scale{
-  position:absolute;
-  left:0;
-  top:0;
-  width:0;
-  height:0;
-  transform-origin:0 0;
-  pointer-events:none;
-}
-
-.map-marker-counter-scale .person-bubble,
-.map-marker-counter-scale .my-bubble{
-  position:absolute!important;
-  left:0!important;
-  top:0!important;
-  transform:translate(-50%,-50%)!important;
-  transform-origin:center center!important;
-  pointer-events:auto;
-}
-
-
-/* Own profile is the location marker. Avoid a second visual circle underneath it. */
-.my-location-dot{display:none!important}
-
-
-/* Crisp marker layer:
-   map/radar scale as a world surface, while avatars are positioned in the
-   already-scaled coordinate plane. This avoids iOS repeatedly rasterizing
-   profile photos through scale() + inverse-scale(), which caused blur/flicker. */
-.people-cloud-scale-layer{
-  overflow:visible!important;
-}
-
-.people-marker-layer{
-  position:absolute;
-  left:0;
-  top:0;
-  z-index:12;
-  pointer-events:none;
-}
-
-.people-marker-layer .map-fixed-marker{
-  position:absolute!important;
-  margin:0!important;
-  transform-origin:center center!important;
-  pointer-events:auto;
-  will-change:auto!important;
-  backface-visibility:hidden;
-  -webkit-font-smoothing:antialiased;
-}
-
-.people-marker-layer .person-bubble,
-.people-marker-layer .my-bubble{
-  left:auto;
-  top:auto;
-}
-
-.people-marker-layer img{
-  image-rendering:auto;
-  transform:translateZ(0);
 }
