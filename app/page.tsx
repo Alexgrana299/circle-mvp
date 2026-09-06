@@ -1670,33 +1670,58 @@ export default function Home() {
       <div className="glow glow-one" />
       <div className="glow glow-two" />
       <section className={`phone-card ${view === "radar" ? "radar-mode" : ""}`}>
-        <header className="topbar">
-          <button className="brand" onClick={() => setView("landing")}>Circle</button>
-          <div className="topbar-actions">
-            {isAuthenticated && view !== "landing" && view !== "auth" && (
-              <>
-                <button className="notification-button" onClick={async () => { await loadRequests(); setView("requests"); }} aria-label="Solicitudes" title="Solicitudes">
-                  <Bell size={18}/>
-                  {pendingIncomingCount > 0 && <span className="notification-badge">{pendingIncomingCount > 9 ? "9+" : pendingIncomingCount}</span>}
-                </button>
-                <button className="logout-button" onClick={signOut} aria-label="Cerrar sesión" title="Cerrar sesión"><LogOut size={17}/></button>
-              </>
-            )}
-          </div>
-        </header>
+        {view !== "landing" && (
+          <header className="topbar">
+            <button className="brand" onClick={() => setView("landing")}>Circle</button>
+            <div className="topbar-actions">
+              {isAuthenticated && view !== "auth" && (
+                <>
+                  <button className="notification-button" onClick={async () => { await loadRequests(); setView("requests"); }} aria-label="Solicitudes" title="Solicitudes">
+                    <Bell size={18}/>
+                    {pendingIncomingCount > 0 && <span className="notification-badge">{pendingIncomingCount > 9 ? "9+" : pendingIncomingCount}</span>}
+                  </button>
+                  <button className="logout-button" onClick={signOut} aria-label="Cerrar sesión" title="Cerrar sesión"><LogOut size={17}/></button>
+                </>
+              )}
+            </div>
+          </header>
+        )}
 
         {view === "landing" && (
-          <div className="landing content-pad">
-            <div className="eyebrow"><Sparkles size={16}/> Conoce a quien ya está aquí</div>
-            <h1>¿Quién está abierto a <span>hablar contigo</span> cerca?</h1>
-            <p className="lead">Circle elimina la parte incómoda de iniciar una conversación: primero sabes quién sí quiere que te acerques.</p>
-            <div className="mini-cloud" aria-label="Vista previa de personas cercanas">
-              {demoPeople.slice(0,4).map((p, i) => <img key={p.id} src={p.avatar} alt="Perfil" className={`mini-avatar a${i+1}`} />)}
-              <div className="you-dot">Tú</div>
+          <div className="landing landing-refresh">
+            <div className="landing-blob landing-blob-one" />
+            <div className="landing-blob landing-blob-two" />
+            <div className="landing-blob landing-blob-three" />
+
+            <div className="landing-logo-wrap">
+              <img src="/circle-logo.png" alt="Circle" className="landing-logo" />
+              <div className="landing-note landing-note-top">MÁS<br/>PERSONAS REALES<br/>EN TU DÍA <span>⌣</span></div>
             </div>
-            <button className="primary hero-button" onClick={enterCircle}><Radio size={20}/>{isAuthenticated ? "Entrar a Circle" : "Buscar gente para socializar"}</button>
-            <p className="microcopy"><MapPin size={14}/> Usamos tu ubicación para saber quién está en tu zona, nunca para mostrar tu posición exacta.</p>
-            {!hasSupabase && <div className="dev-note">Conecta Supabase para usar cuentas y perfiles reales.</div>}
+
+            <div className="landing-copy">
+              <div className="eyebrow landing-eyebrow"><Sparkles size={15}/> Conoce a alguien nuevo</div>
+              <h1>Alguien cerca de ti podría ser tu <span>próximo gran amigo.</span></h1>
+              <p className="lead">Circle te ayuda a conocer, en el mundo real, personas que ya están a tu alrededor y también quieren socializar.</p>
+            </div>
+
+            <div className="landing-radar-wrap" aria-label="Vista previa de cómo se muestran las personas cercanas en Circle">
+              <div className="landing-radar-ring ring-1" />
+              <div className="landing-radar-ring ring-2" />
+              <div className="landing-radar-ring ring-3" />
+              <div className="landing-radar-ring ring-4" />
+              {demoPeople.map((p, i) => (
+                <img key={p.id} src={p.avatar} alt="" className={`landing-radar-avatar landing-radar-avatar-${i+1}`} />
+              ))}
+              <div className="landing-you">Tú</div>
+              <div className="landing-note landing-note-left">TAL VEZ<br/>TU PRÓXIMA<br/>GRAN AMISTAD<br/>ESTÁ AQUÍ <span>↘</span></div>
+              <div className="landing-note landing-note-bottom">MISMO LUGAR<br/>MÁS HISTORIAS <span>══</span></div>
+            </div>
+
+            <div className="landing-actions">
+              <button className="primary landing-open-button" onClick={enterCircle}><Radio size={20}/>Abrir mi Circle</button>
+              <p className="microcopy landing-privacy"><MapPin size={14}/> Usamos tu ubicación para saber quién está cerca, nunca para mostrar tu posición exacta.</p>
+              {!hasSupabase && <div className="dev-note">Conecta Supabase para usar cuentas y perfiles reales.</div>}
+            </div>
           </div>
         )}
 

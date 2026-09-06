@@ -180,3 +180,32 @@ body{width:100%;max-width:100%;overflow-x:hidden}
 .request-message-card{display:flex;flex-direction:column;gap:4px;margin:11px 0 12px;padding:12px 13px;border:1px solid #dce8ff;border-radius:14px;background:#f5f8ff;text-align:left}
 .request-message-card span{font-size:9px;text-transform:uppercase;letter-spacing:.07em;font-weight:900;color:#6683b4}
 .request-message-card strong{font-size:12px;line-height:1.5;color:#25344e;font-weight:750;white-space:pre-wrap;overflow-wrap:anywhere}
+
+/* Refreshed landing: social, universal and app-like */
+.landing-refresh{position:relative;min-height:820px;padding:26px 30px 24px;overflow:hidden;background:radial-gradient(circle at 45% 55%,rgba(79,125,255,.06),transparent 35%),linear-gradient(180deg,#fff 0%,#fbfcff 100%)}
+.landing-refresh>*{position:relative;z-index:2}
+.landing-logo-wrap{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:18px}
+.landing-logo{width:150px;height:auto;display:block;object-fit:contain}
+.landing-copy{max-width:360px}
+.landing-eyebrow{margin:0 0 13px}
+.landing-refresh h1{font-size:40px;line-height:1.02;letter-spacing:-1.9px;margin:0 0 12px;max-width:365px}
+.landing-refresh h1 span{background:linear-gradient(120deg,#2f74ff,#8a45ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.landing-refresh .lead{font-size:15px;line-height:1.43;margin-bottom:8px;max-width:355px}
+.landing-radar-wrap{height:315px;position:relative;margin:0 -5px 6px}
+.landing-radar-ring{position:absolute;left:50%;top:52%;transform:translate(-50%,-50%);border:1px solid rgba(77,113,216,.14);border-radius:50%}
+.landing-radar-ring.ring-1{width:118px;height:118px}.landing-radar-ring.ring-2{width:184px;height:184px}.landing-radar-ring.ring-3{width:248px;height:248px}.landing-radar-ring.ring-4{width:302px;height:302px}
+.landing-you{position:absolute;left:50%;top:52%;transform:translate(-50%,-50%);width:76px;height:76px;border-radius:50%;display:grid;place-items:center;background:linear-gradient(145deg,#196ef7,#3486ff);color:#fff;font-size:16px;font-weight:900;border:5px solid #fff;box-shadow:0 0 0 3px rgba(47,116,255,.16),0 10px 28px rgba(47,116,255,.25)}
+.landing-radar-avatar{position:absolute;width:64px;height:64px;object-fit:cover;border-radius:50%;border:4px solid #fff;box-shadow:0 7px 20px rgba(20,35,70,.17)}
+.landing-radar-avatar-1{left:24%;top:11%}.landing-radar-avatar-2{right:17%;top:13%}.landing-radar-avatar-3{left:10%;top:54%}.landing-radar-avatar-4{right:7%;top:51%}.landing-radar-avatar-5{left:43%;bottom:1%}
+.landing-note{font-family:"Comic Sans MS","Bradley Hand",cursive;font-size:11px;font-weight:800;line-height:1.06;color:#704dff;letter-spacing:.3px;transform:rotate(-4deg)}
+.landing-note span{display:block;font-size:20px;line-height:1;margin-top:3px}
+.landing-note-top{text-align:center;transform:rotate(-6deg);margin-top:2px}.landing-note-left{position:absolute;left:0;top:34%;transform:rotate(-10deg);text-align:center}.landing-note-bottom{position:absolute;right:0;bottom:7%;transform:rotate(-8deg);text-align:center}
+.landing-actions{margin-top:2px}
+.landing-open-button{min-height:56px;border-radius:15px;font-size:16px;font-weight:900;box-shadow:0 12px 28px rgba(47,116,255,.26)}
+.landing-privacy{justify-content:center;text-align:center;margin:12px 10px 0;font-size:10px;color:#7e8aa0}.landing-privacy svg{flex:0 0 auto;margin-top:1px}
+.landing-blob{position:absolute!important;z-index:0!important;border-radius:50%;filter:none;pointer-events:none}
+.landing-blob-one{width:140px;height:140px;right:-62px;top:-62px;background:radial-gradient(circle at 30% 30%,#ece4ff,#d8d5ff)}
+.landing-blob-two{width:170px;height:170px;right:-86px;top:280px;background:radial-gradient(circle at 35% 35%,#dce8ff,#bfc8ff)}
+.landing-blob-three{width:130px;height:130px;left:-76px;bottom:72px;background:radial-gradient(circle at 65% 35%,#e7ddff,#cfc4ff)}
+@media(max-width:480px){.landing-refresh{min-height:100svh;padding:22px 24px 20px}.landing-logo{width:142px}.landing-refresh h1{font-size:39px}.landing-refresh .lead{font-size:14.5px}.landing-radar-wrap{height:310px;margin-left:-7px;margin-right:-7px}.landing-radar-ring.ring-4{width:286px;height:286px}.landing-note{font-size:10px}}
+@media(max-width:380px){.landing-refresh{padding-left:20px;padding-right:20px}.landing-logo{width:132px}.landing-refresh h1{font-size:35px}.landing-radar-wrap{height:292px}.landing-radar-ring.ring-4{width:270px;height:270px}.landing-radar-avatar{width:58px;height:58px}.landing-note-left{left:-3px}}
