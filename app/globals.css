@@ -29,7 +29,7 @@
 .incoming-alert{width:100%;border:1px solid #d5e4ff;background:linear-gradient(135deg,#eef5ff,#f8fbff);border-radius:16px;padding:12px 13px;margin:10px 0 3px;display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;text-align:left;color:#2866dc;cursor:pointer}.incoming-alert div{display:flex;flex-direction:column;gap:2px}.incoming-alert strong{font-size:12px;color:#243854}.incoming-alert span{font-size:10px;color:#72829a}.incoming-alert-arrow{font-size:23px!important;color:#3a72d7!important;line-height:1}
 
 /* Social presence: available vs busy */
-.nearby-summary{display:block;margin-top:3px;color:#7b879a;font-size:10px;font-weight:700}
+.nearby-summary{display:flex;align-items:center;gap:5px;margin-top:3px;color:#7b879a;font-size:10px;font-weight:700}.nearby-availability-dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px #e4f8f3;flex:0 0 auto}
 .person-bubble.busy img,.person-bubble.busy .avatar-fallback{box-shadow:0 0 0 4px #eee7ff,0 10px 24px rgba(100,67,183,.18);border-color:#fff}
 .person-bubble.busy .intent-tag{background:#f0eaff;color:#6b4ac4}
 .person-bubble.busy small{color:#7254bf;font-weight:900}
@@ -51,7 +51,7 @@
 
 /* Scrollable social canvas: positions are illustrative, never geographic. */
 .people-cloud-frame{position:relative;margin:0 -6px 10px;border-radius:28px;border:1px solid #edf2fb;background:linear-gradient(180deg,#fbfdff,#f7faff);overflow:hidden}
-.social-map-background{position:absolute;inset:0;width:100%;height:100%;border:0;z-index:0;pointer-events:none;filter:grayscale(1) saturate(0) contrast(.78) brightness(1.12);opacity:.24;transform:scale(1.02);transform-origin:center;background:#f4f6f8}
+.social-map-background{position:absolute;inset:0;width:100%;height:100%;border:0;z-index:0;pointer-events:none;filter:grayscale(1) saturate(0) contrast(.8) brightness(1.08);opacity:.29;transform:scale(1.02);transform-origin:center;background:#f4f6f8}
 .people-cloud-frame::after{content:"";position:absolute;inset:0;z-index:1;pointer-events:none;background:rgba(249,251,253,.58)}
 .people-cloud-scroll{position:relative;z-index:2;height:520px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#d7e2f2 transparent;-webkit-overflow-scrolling:touch;touch-action:none;cursor:grab;user-select:none}
 .people-cloud-canvas{position:relative;min-width:100%;min-height:100%;background:radial-gradient(circle at 48% 45%,rgba(47,116,255,.045),transparent 30%),radial-gradient(circle at 75% 72%,rgba(11,168,142,.035),transparent 25%)}

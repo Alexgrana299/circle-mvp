@@ -1761,7 +1761,7 @@ export default function Home() {
               <div className="nearby-floating-card">
                 <span className="subtle">Personas cerca de ti</span>
                 <h2>{nearbyCount} personas cerca</h2>
-                <small className="nearby-summary">{availableNearbyCount} disponibles{nearbyCount - availableNearbyCount > 0 ? ` · ${nearbyCount - availableNearbyCount} ocupadas` : ""}</small>
+                <small className="nearby-summary"><span className="nearby-availability-dot" aria-hidden="true" />{availableNearbyCount} Disponibles{nearbyCount - availableNearbyCount > 0 ? ` · ${nearbyCount - availableNearbyCount} ocupadas` : ""}</small>
                 {status && <div className="status-line">{status}</div>}
               </div>
 
