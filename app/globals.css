@@ -324,3 +324,41 @@ body{width:100%;max-width:100%;overflow-x:hidden}
 
 /* Own profile is the location marker. Avoid a second visual circle underneath it. */
 .my-location-dot{display:none!important}
+
+
+/* Crisp marker layer:
+   map/radar scale as a world surface, while avatars are positioned in the
+   already-scaled coordinate plane. This avoids iOS repeatedly rasterizing
+   profile photos through scale() + inverse-scale(), which caused blur/flicker. */
+.people-cloud-scale-layer{
+  overflow:visible!important;
+}
+
+.people-marker-layer{
+  position:absolute;
+  left:0;
+  top:0;
+  z-index:12;
+  pointer-events:none;
+}
+
+.people-marker-layer .map-fixed-marker{
+  position:absolute!important;
+  margin:0!important;
+  transform-origin:center center!important;
+  pointer-events:auto;
+  will-change:auto!important;
+  backface-visibility:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+
+.people-marker-layer .person-bubble,
+.people-marker-layer .my-bubble{
+  left:auto;
+  top:auto;
+}
+
+.people-marker-layer img{
+  image-rendering:auto;
+  transform:translateZ(0);
+}

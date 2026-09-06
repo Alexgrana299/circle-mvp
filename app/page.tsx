@@ -1603,13 +1603,20 @@ export default function Home() {
         const nextCoords = { lat: next.latitude, lng: next.longitude };
         const previous = lastPresenceCoordsRef.current || coords;
 
-        // The blue/user marker always follows the freshest coordinate supplied by the phone.
-        setCoords(nextCoords);
+        if (previous) {
+          const movement = distanceMeters(previous, nextCoords);
+          const reportedAccuracy = Number.isFinite(next.accuracy) ? next.accuracy : 12;
 
-        // Avoid unnecessary DB writes from tiny GPS jitter, without freezing the visual marker.
-        if (previous && distanceMeters(previous, nextCoords) < 3) return;
+          // iPhone GPS "breathes" a few meters even while the phone is still.
+          // Do not visually recenter the map for movements that fit inside normal
+          // GPS uncertainty. This is what was causing the tiny periodic jumps.
+          const jitterThreshold = Math.max(5, Math.min(10, reportedAccuracy * 0.45));
+          if (movement < jitterThreshold) return;
+        }
 
+        // Only a meaningful physical movement recenters the radar.
         lastPresenceCoordsRef.current = nextCoords;
+        setCoords(nextCoords);
 
         await client.rpc("update_my_presence_location", {
           user_lat: nextCoords.lat,
@@ -1989,46 +1996,43 @@ export default function Home() {
                           )}
                         </>
                       )}
+                    </div>
+
+                    <div
+                      className="people-marker-layer"
+                      style={{ width: `${cloudLayout.width * canvasZoom}px`, height: `${cloudLayout.height * canvasZoom}px` }}
+                    >
                       {people.map((p, i) => (
-                        <div
+                        <button
                           key={p.id}
-                          className="person-map-anchor"
-                          style={{ left: `${cloudLayout.people[i].x}px`, top: `${cloudLayout.people[i].y}px` }}
+                          className={`person-bubble map-fixed-marker ${p.socialStatus === "busy" ? "busy" : ""} ${people.length > 40 ? "dense" : ""} ${people.length > 70 ? "very-dense" : ""}`}
+                          style={{
+                            left: `${cloudLayout.people[i].x * canvasZoom}px`,
+                            top: `${cloudLayout.people[i].y * canvasZoom}px`,
+                            transform: `translate(-50%, -50%) scale(${peopleDensityScale})`,
+                          }}
+                          onClick={() => openPerson(p)}
                         >
-                          <div
-                            className="map-marker-counter-scale"
-                            style={{ transform: `scale(${peopleDensityScale / canvasZoom})` }}
-                          >
-                            <button
-                              className={`person-bubble ${p.socialStatus === "busy" ? "busy" : ""} ${people.length > 40 ? "dense" : ""} ${people.length > 70 ? "very-dense" : ""}`}
-                              onClick={() => openPerson(p)}
-                            >
-                              <span className="intent-tag">{p.intent}</span>
-                              {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name}/> : <span className="avatar-fallback locked-avatar"><UserRound size={28}/></span>}
-                              <strong>{p.name}</strong><small>{p.socialStatus === "busy" ? "Ocupado" : "Disponible"}</small>
-                            </button>
-                          </div>
-                        </div>
+                          <span className="intent-tag">{p.intent}</span>
+                          {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name}/> : <span className="avatar-fallback locked-avatar"><UserRound size={28}/></span>}
+                          <strong>{p.name}</strong><small>{p.socialStatus === "busy" ? "Ocupado" : "Disponible"}</small>
+                        </button>
                       ))}
-                      <div
-                        className="my-map-anchor"
-                        style={{ left: `${myWorldPoint.x}px`, top: `${myWorldPoint.y}px` }}
+
+                      <button
+                        className={`my-bubble map-fixed-marker ${activeConversation ? "busy" : ""}`}
+                        style={{
+                          left: `${myWorldPoint.x * canvasZoom}px`,
+                          top: `${myWorldPoint.y * canvasZoom}px`,
+                          transform: "translate(-50%, -50%)",
+                        }}
+                        onClick={() => openMyProfile()}
+                        aria-label="Abrir mi perfil"
                       >
-                        <div
-                          className="map-marker-counter-scale"
-                          style={{ transform: `scale(${1 / canvasZoom})` }}
-                        >
-                          <button
-                            className={`my-bubble ${activeConversation ? "busy" : ""}`}
-                            onClick={() => openMyProfile()}
-                            aria-label="Abrir mi perfil"
-                          >
-                            {avatarUrl ? <img src={avatarUrl} alt="Tu perfil"/> : <span className="my-avatar-empty"><UserRound size={30}/></span>}
-                            <strong>Tú</strong>
-                            <small>{profileComplete ? (activeConversation ? "Ocupado" : mood) : "Completar perfil"}</small>
-                          </button>
-                        </div>
-                      </div>
+                        {avatarUrl ? <img src={avatarUrl} alt="Tu perfil"/> : <span className="my-avatar-empty"><UserRound size={30}/></span>}
+                        <strong>Tú</strong>
+                        <small>{profileComplete ? (activeConversation ? "Ocupado" : mood) : "Completar perfil"}</small>
+                      </button>
                     </div>
                   </div>
                 </div>
