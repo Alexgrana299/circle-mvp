@@ -362,3 +362,33 @@ body{width:100%;max-width:100%;overflow-x:hidden}
   image-rendering:auto;
   transform:translateZ(0);
 }
+
+
+/* HD marker rendering on iPhone:
+   positions are pixel-snapped via JS, while marker artwork itself is rendered
+   at native size with no scale(), translateZ(), will-change, or compositing tricks. */
+.people-marker-layer .map-fixed-marker{
+  transform:none!important;
+  will-change:auto!important;
+  backface-visibility:visible!important;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+
+.people-marker-layer img{
+  transform:none!important;
+  image-rendering:auto;
+  backface-visibility:visible;
+}
+
+.people-marker-layer .person-bubble img,
+.people-marker-layer .avatar-fallback{
+  width:80px;
+  height:80px;
+}
+
+.people-marker-layer .my-bubble img,
+.people-marker-layer .my-avatar-empty{
+  width:88px;
+  height:88px;
+}

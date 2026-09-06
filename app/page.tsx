@@ -1678,6 +1678,12 @@ export default function Home() {
     centerPeopleCanvas();
   }
 
+  function snapToDevicePixel(value: number) {
+    if (typeof window === "undefined") return value;
+    const dpr = window.devicePixelRatio || 1;
+    return Math.round(value * dpr) / dpr;
+  }
+
   function applyCanvasZoom(nextValue: number, anchorX?: number, anchorY?: number) {
     const el = peopleCanvasRef.current;
     if (!el) return;
@@ -2002,29 +2008,37 @@ export default function Home() {
                       className="people-marker-layer"
                       style={{ width: `${cloudLayout.width * canvasZoom}px`, height: `${cloudLayout.height * canvasZoom}px` }}
                     >
-                      {people.map((p, i) => (
-                        <button
-                          key={p.id}
-                          className={`person-bubble map-fixed-marker ${p.socialStatus === "busy" ? "busy" : ""} ${people.length > 40 ? "dense" : ""} ${people.length > 70 ? "very-dense" : ""}`}
-                          style={{
-                            left: `${cloudLayout.people[i].x * canvasZoom}px`,
-                            top: `${cloudLayout.people[i].y * canvasZoom}px`,
-                            transform: `translate(-50%, -50%) scale(${peopleDensityScale})`,
-                          }}
-                          onClick={() => openPerson(p)}
-                        >
-                          <span className="intent-tag">{p.intent}</span>
-                          {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name}/> : <span className="avatar-fallback locked-avatar"><UserRound size={28}/></span>}
-                          <strong>{p.name}</strong><small>{p.socialStatus === "busy" ? "Ocupado" : "Disponible"}</small>
-                        </button>
-                      ))}
+                      {people.map((p, i) => {
+                        const markerX = snapToDevicePixel(cloudLayout.people[i].x * canvasZoom);
+                        const markerY = snapToDevicePixel(cloudLayout.people[i].y * canvasZoom);
+                        const markerScale = peopleDensityScale;
+                        return (
+                          <button
+                            key={p.id}
+                            className={`person-bubble map-fixed-marker ${p.socialStatus === "busy" ? "busy" : ""} ${people.length > 40 ? "dense" : ""} ${people.length > 70 ? "very-dense" : ""}`}
+                            style={{
+                              left: `${markerX}px`,
+                              top: `${markerY}px`,
+                              marginLeft: `${-63 * markerScale}px`,
+                              marginTop: `${-49 * markerScale}px`,
+                              width: `${126 * markerScale}px`,
+                            }}
+                            onClick={() => openPerson(p)}
+                          >
+                            <span className="intent-tag">{p.intent}</span>
+                            {profileComplete && p.avatar ? <img src={p.avatar} alt={p.name}/> : <span className="avatar-fallback locked-avatar"><UserRound size={28}/></span>}
+                            <strong>{p.name}</strong><small>{p.socialStatus === "busy" ? "Ocupado" : "Disponible"}</small>
+                          </button>
+                        );
+                      })}
 
                       <button
                         className={`my-bubble map-fixed-marker ${activeConversation ? "busy" : ""}`}
                         style={{
-                          left: `${myWorldPoint.x * canvasZoom}px`,
-                          top: `${myWorldPoint.y * canvasZoom}px`,
-                          transform: "translate(-50%, -50%)",
+                          left: `${snapToDevicePixel(myWorldPoint.x * canvasZoom)}px`,
+                          top: `${snapToDevicePixel(myWorldPoint.y * canvasZoom)}px`,
+                          marginLeft: "-58px",
+                          marginTop: "-49px",
                         }}
                         onClick={() => openMyProfile()}
                         aria-label="Abrir mi perfil"
