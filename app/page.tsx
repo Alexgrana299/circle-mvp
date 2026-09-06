@@ -189,6 +189,7 @@ export default function Home() {
   const [requestActionId, setRequestActionId] = useState<number | null>(null);
   const [requestNotice, setRequestNotice] = useState("");
   const [requestTab, setRequestTab] = useState<RequestTab>("incoming");
+  const [fakeCancelledRequestIds, setFakeCancelledRequestIds] = useState<Set<number>>(new Set());
   const [activeConversation, setActiveConversation] = useState<ActiveConversation | null>(null);
   const [conversationEnding, setConversationEnding] = useState(false);
   const [connectionNotice, setConnectionNotice] = useState<ActiveConversation | null>(null);
@@ -232,6 +233,28 @@ export default function Home() {
     lastDistance: number;
   }>({ mode: "idle", lastX: 0, lastY: 0, lastDistance: 0 });
   const suppressCanvasClickRef = useRef(false);
+
+  function fakeCancelledKey(requestId: number) { return `circle_fake_cancelled_${requestId}`; }
+  function isFakeCancelled(requestId: number) {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(fakeCancelledKey(requestId)) === "1";
+  }
+  function markFakeCancelled(requestId: number) {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(fakeCancelledKey(requestId), "1");
+    setFakeCancelledRequestIds(current => {
+      const next = new Set(current);
+      next.add(requestId);
+      return next;
+    });
+  }
+
+  function visibleRequestStatus(request: SocialRequest) {
+    if (request.direction === "outgoing" && request.status === "declined") {
+      return fakeCancelledRequestIds.has(request.id) || isFakeCancelled(request.id) ? "cancelled" : "pending";
+    }
+    return request.status;
+  }
 
   function connectionAckKey(requestId: number) { return `circle_connection_ack_${requestId}`; }
   function isConnectionAcknowledged(requestId: number) {
@@ -772,6 +795,11 @@ export default function Home() {
       }));
       setRequests(normalized);
       requestsRef.current = normalized;
+      setFakeCancelledRequestIds(new Set(
+        normalized
+          .filter(r => r.direction === "outgoing" && r.status === "declined" && isFakeCancelled(r.id))
+          .map(r => r.id)
+      ));
       return normalized;
     } catch (error: any) {
       if (!silent) setRequestNotice(error?.message || "No pudimos cargar tus solicitudes.");
@@ -973,6 +1001,23 @@ export default function Home() {
       setRequestNotice(error?.message || "No pudimos cancelar la solicitud.");
     } finally {
       setRequestActionId(null);
+    }
+  }
+
+  async function cancelVisibleOutgoingRequest(request: SocialRequest) {
+    if (request.direction !== "outgoing") return;
+
+    if (request.status === "pending") {
+      await cancelRequest(request);
+      return;
+    }
+
+    // Si en BD fue rechazada, no alteramos ese dato.
+    // Para el emisor se comporta como un pendiente normal: al cancelar,
+    // la UI lo muestra como Cancelada y recordamos esa decisión en este dispositivo.
+    if (request.status === "declined") {
+      markFakeCancelled(request.id);
+      setRequestNotice(`Cancelaste el saludo enviado a ${request.name}.`);
     }
   }
 
@@ -1828,7 +1873,15 @@ export default function Home() {
                     <div className="request-person">
                       {request.avatar ? <img src={request.avatar} alt={request.name}/> : <span className="request-avatar-fallback"><UserRound size={25}/></span>}
                       <div><span className="request-direction">{request.direction === "incoming" ? "Quiere saludarte" : "Solicitud enviada"}</span><h3>{request.name}</h3><small>{request.intent}</small></div>
-                      <span className={`request-status status-${request.status}`}>{request.status === "pending" ? "Pendiente" : request.status === "accepted" ? "Aceptada" : request.status === "declined" ? "Rechazada" : "Cancelada"}</span>
+                      <span className={`request-status status-${visibleRequestStatus(request)}`}>
+                        {visibleRequestStatus(request) === "pending"
+                          ? "Pendiente"
+                          : visibleRequestStatus(request) === "accepted"
+                          ? "Aceptada"
+                          : visibleRequestStatus(request) === "declined"
+                          ? "Rechazada"
+                          : "Cancelada"}
+                      </span>
                     </div>
                     <p className="request-bio">{request.bio}</p>
                     {!!request.interests.length && <div className="chips request-chips">{request.interests.slice(0,5).map(x => <span key={x}>{x}</span>)}</div>}
@@ -1848,10 +1901,10 @@ export default function Home() {
                         <button className="accept-request" disabled={requestActionId === request.id} onClick={() => respondToRequest(request, "accepted")}><Check size={18}/>{requestActionId === request.id ? "Procesando…" : "Puede acercarse"}</button>
                       </div>
                     )}
-                    {request.direction === "outgoing" && request.status === "pending" && (
+                    {request.direction === "outgoing" && visibleRequestStatus(request) === "pending" && (
                       <div className="outgoing-pending-row">
                         <div className="waiting-copy">Esperando respuesta. Su ubicación sigue oculta.</div>
-                        <button className="cancel-request" type="button" disabled={requestActionId === request.id} onClick={() => cancelRequest(request)}>{requestActionId === request.id ? "Cancelando…" : "Cancelar saludo"}</button>
+                        <button className="cancel-request" type="button" disabled={requestActionId === request.id} onClick={() => cancelVisibleOutgoingRequest(request)}>{requestActionId === request.id ? "Cancelando…" : "Cancelar saludo"}</button>
                       </div>
                     )}
                     {request.direction === "outgoing" && request.status === "accepted" && (request.whereIAm || request.whatImWearing) && <div className="accepted-copy"><Check size={16}/> Ya puedes acercarte a saludarle. Ambos aparecen como ocupados hasta finalizar la plática.</div>}
