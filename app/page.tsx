@@ -697,7 +697,7 @@ export default function Home() {
       await supabase.rpc("update_my_presence_location", { user_lat: location.lat, user_lng: location.lng });
       lastPresenceCoordsRef.current = location;
 
-      const { data, error } = await supabase.rpc("nearby_profiles_precise", {
+      const { data, error } = await supabase.rpc("nearby_profiles", {
         user_lat: location.lat,
         user_lng: location.lng,
         radius_meters: radius,
@@ -834,7 +834,7 @@ export default function Home() {
   function markConversationLocally(conversation: ActiveConversation | null) {
     setActiveConversation(conversation);
     if (!conversation) return;
-    // Poka-yoke visual: no esperamos a que nearby_profiles_precise vuelva para reflejar
+    // Poka-yoke visual: no esperamos a que nearby_profiles vuelva para reflejar
     // que la contraparte ya está ocupada. El siguiente refresh confirma desde BD.
     setPeople(current => current.map(person =>
       person.id === conversation.otherId
@@ -1079,7 +1079,7 @@ export default function Home() {
 
   async function refreshNearbyAt(location: { lat: number; lng: number }, silent = false) {
     if (!supabase) return;
-    const { data, error } = await supabase.rpc("nearby_profiles_precise", {
+    const { data, error } = await supabase.rpc("nearby_profiles", {
       user_lat: location.lat,
       user_lng: location.lng,
       radius_meters: radius,
