@@ -244,7 +244,7 @@ export default function Home() {
     notifiedAcceptedRequestIdsRef.current.add(requestId);
   }
 
-  const radius = Number(process.env.NEXT_PUBLIC_NEARBY_RADIUS_METERS || 37.5);
+  const radius = Number(process.env.NEXT_PUBLIC_NEARBY_RADIUS_METERS || 75);
   const profileComplete = useMemo(() => isProfileComplete({ name, bio, avatar: avatarUrl, interests, mood, whereIAm, whatImWearing }), [name, bio, avatarUrl, interests, mood, whereIAm, whatImWearing]);
   const nearbyCount = useMemo(() => people.length, [people]);
   const pendingIncomingCount = useMemo(() => requests.filter(r => r.direction === "incoming" && r.status === "pending").length, [requests]);
